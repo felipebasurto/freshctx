@@ -95,10 +95,17 @@ selected file revisions and returns `stale_plan` if anything changed.
 
 FreshCtx vendors Tree-sitter WASM for Python, JavaScript, TypeScript, TSX, Go,
 and Rust. A partial read becomes a `symbol` only when Tree-sitter resolves one
-unique class, function, or method. Otherwise, including unsupported languages,
-parse errors, ambiguity, renamed symbols, and deleted symbols, FreshCtx uses
-the current complete `file` when it can safely read it. It never reuses a past
-file body as current context.
+unique class, function, or method. A ranged observe that parses but does not
+pin a unique symbol stays a `region` slice of those bytes. It is not the rest
+of the file. Unread code is omitted from the projection and is not evidence of
+absence. Unsupported languages, parse errors, renamed symbols, and deleted
+symbols still use the current complete `file` when FreshCtx can safely read it.
+It never reuses a past file body as current context.
+
+The host must send `observe.range` when it has a byte span. FreshCtx does not
+invent a selector from prompt text. After `freshctx serve` restarts, the same
+`session_id` reloads `.freshctx/sessions/` and refreshes from disk on the next
+`prepare`. Missing files stay unresolved. Last-known bodies are never injected.
 
 Files must be relative, regular, UTF-8, below the workspace root, not symlinks,
 at most 512 KiB, and stable across a double-stat snapshot. Selection considers
