@@ -17,4 +17,6 @@ jobs:
       - run: npm run pack:check
       - run: npm run bench:layer-a
       - run: npm run bench:mva
+      - run: npm run bench:econ
+      - run: npm run bench:horizon
       - run: npm run bench:announce

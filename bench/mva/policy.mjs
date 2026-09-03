@@ -5,6 +5,8 @@ import path from "node:path";
 
 import { transformAppendOnly } from "../transformers/append-only.mjs";
 import { transformCorvus } from "../transformers/corvus.mjs";
+import { transformHermesPrune } from "../transformers/hermes-prune.mjs";
+import { transformPiCompact } from "../transformers/pi-compact.mjs";
 
 export function quotedToken(text) {
   const match = /'([^']+)'/u.exec(text);
@@ -19,7 +21,11 @@ export function visibleText(view, filePath) {
 }
 
 export async function viewForArm(arm, { root, observations, fixture, freshctx, requestId }) {
-  if (arm === "append_only") return transformAppendOnly({ observations });
+  if (arm === "append_only" || arm === "today_tool_history") {
+    return transformAppendOnly({ observations, arm });
+  }
+  if (arm === "pi_compact") return transformPiCompact({ observations });
+  if (arm === "hermes_prune") return transformHermesPrune({ observations });
   if (arm === "corvus_full_file") return transformCorvus({ root, observations });
   return freshctx.snapshot(requestId);
 }

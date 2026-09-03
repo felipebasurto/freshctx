@@ -8,6 +8,18 @@ function isStaleObservation(obs, disk) {
   return true;
 }
 
+export function crossAgentStale(view, { observations, disk }) {
+  for (const obs of observations) {
+    const current = disk.get(obs.path);
+    if (current === undefined) continue;
+    if (obs.text === current) continue;
+    if (obs.range && current.includes(obs.text)) continue;
+    if (view.history.some((item) => item.kind === "body" && item.text === obs.text)) return true;
+    if ((view.selected ?? []).some((unit) => unit.content === obs.text)) return true;
+  }
+  return false;
+}
+
 export function payloadAndEnvelope(view) {
   const liveBlockBytes = Buffer.byteLength(view.liveBlock ?? "", "utf8");
   if (liveBlockBytes === 0) {
@@ -71,7 +83,7 @@ function freshness(view, gold) {
   if (entries.every(([, spec]) => spec.omit)) {
     return (view.selected ?? []).length === 0;
   }
-  if (view.arm === "append_only") {
+  if (view.arm === "append_only" || view.arm === "today_tool_history" || view.arm === "pi_compact" || view.arm === "hermes_prune") {
     for (const [rel, spec] of entries) {
       if (spec.omit) continue;
       const body = view.history.find((item) => item.path === rel && item.kind === "body");

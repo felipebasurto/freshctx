@@ -1,4 +1,4 @@
-export function transformAppendOnly({ observations }) {
+export function transformAppendOnly({ observations, arm = "append_only" }) {
   const history = observations.map((obs) => ({
     kind: "body",
     resultId: obs.resultId,
@@ -11,10 +11,12 @@ export function transformAppendOnly({ observations }) {
     content: obs.text,
   }));
   return {
-    arm: "append_only",
+    arm,
     history,
     liveBlock: "",
     selected,
     workingSetSize: history.length,
+    compact_calls: 0,
+    prune_commits: 0,
   };
 }

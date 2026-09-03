@@ -1,0 +1,11 @@
+{
+  "id": "partial-read-go",
+  "kind": "partial-read",
+  "budgetBytes": 65536,
+  "padBytes": 17000,
+  "path": "mod.go",
+  "match": "func Chosen() int { return 1 }",
+  "files": {
+    "mod.go": "package demo\n\nfunc Chosen() int { return 1 }\n\nfunc Other() int { return 2 }\n"
+  }
+}

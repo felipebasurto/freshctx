@@ -1,0 +1,21 @@
+{
+  "id": "freshctx-price-card-v1",
+  "cited": true,
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "retrieved": "2026-09-03",
+  "model": "claude-sonnet-4-6",
+  "bytes_per_token": 4,
+  "output_stub_tokens_per_api_call": 200,
+  "output_stub_tokens_per_compact_call": 500,
+  "anthropic_sonnet_4_6": {
+    "input_usd_per_mtok": 3,
+    "output_usd_per_mtok": 15,
+    "cache_write_5m_usd_per_mtok": 3.75,
+    "cache_read_usd_per_mtok": 0.3
+  },
+  "openai_gpt_5_cited_optional": {
+    "note": "Not used in usd_input_micros. Cited only so a reader can convert.",
+    "input_usd_per_mtok": 1.25,
+    "output_usd_per_mtok": 10
+  }
+}
