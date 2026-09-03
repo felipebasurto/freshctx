@@ -43,14 +43,17 @@ export function renderUnit(unit) {
     `revision="${escapeAttribute(unit.revision)}"`,
     `resolution="${escapeAttribute(unit.resolution)}"`,
     `content-bytes="${contentBytes}"`,
-  ].join(" ");
-  return `<freshctx-unit ${attributes}>\n${unit.content}\n</freshctx-unit>`;
+  ];
+  if (typeof unit.selector === "string" && unit.selector.length > 0) {
+    attributes.splice(3, 0, `selector="${escapeAttribute(unit.selector)}"`);
+  }
+  return `<freshctx-unit ${attributes.join(" ")}>\n${unit.content}\n</freshctx-unit>`;
 }
 
 function renderEnvelope({ selected, omitted }) {
   const units = selected.map(renderUnit);
   const preamble = selected.length > 0
-    ? "The following code is the current workspace state. Historical read markers refer here."
+    ? "Current bytes of observed units. Unread code is not shown and is not evidence of absence. Historical read markers refer here."
     : "";
   return [
     `<freshctx selected="${selected.length}" omitted="${omitted.length}">${preamble}`,

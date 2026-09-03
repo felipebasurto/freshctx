@@ -39,9 +39,33 @@ function symbolUnitId(sourcePath, selector) {
   return stableId("fc", { kind: "symbol", path: sourcePath, selector });
 }
 
+function regionUnitId(sourcePath, startByte, endByte) {
+  return stableId("fc", { kind: "region", path: sourcePath, startByte, endByte });
+}
+
 function lineRangeForText(text) {
   const count = text.length === 0 ? 1 : text.split("\n").length;
   return { startLine: 1, endLine: count };
+}
+
+function linesUpTo(bytes, offset) {
+  if (offset <= 0) return 1;
+  let lines = 1;
+  const limit = Math.min(offset, bytes.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (bytes[index] === 0x0a) lines += 1;
+  }
+  return lines;
+}
+
+function lineRangeForByteSpan(bytes, startByte, endByte) {
+  const startLine = linesUpTo(bytes, startByte);
+  const last = Math.max(startByte, endByte - 1);
+  return { startLine, endLine: linesUpTo(bytes, last) };
+}
+
+function utf8Slice(bytes, startByte, endByte) {
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(startByte, endByte));
 }
 
 function reasonFor(error) {
@@ -83,6 +107,26 @@ function resolvedFile({ sourcePath, observedAt, snapshot, resolution = "file" })
     endByte: snapshot.bytes.length,
     ...lines,
     content: snapshot.text,
+  };
+}
+
+function resolvedRegion({ sourcePath, observedAt, snapshot, range, resolution = "region" }) {
+  const bytes = snapshot.bytes.subarray(range.startByte, range.endByte);
+  const revision = revisionFor(bytes);
+  return {
+    id: regionUnitId(sourcePath, range.startByte, range.endByte),
+    path: sourcePath,
+    kind: "region",
+    selector: null,
+    observedAt,
+    state: "resolved",
+    resolution,
+    sourceRevision: revisionFor(snapshot.bytes),
+    revision,
+    startByte: range.startByte,
+    endByte: range.endByte,
+    ...lineRangeForByteSpan(snapshot.bytes, range.startByte, range.endByte),
+    content: utf8Slice(snapshot.bytes, range.startByte, range.endByte),
   };
 }
 
@@ -162,6 +206,9 @@ export class FreshCtxSession {
       if (rangeMatchesCurrent) {
         const resolved = await uniqueUnitForRange({ path: sourcePath, text: snapshot.text, range: request.range });
         if (resolved.unit) unit = resolvedSymbol({ sourcePath, observedAt, snapshot, parsed: resolved.unit });
+        else if (resolved.status === "ok") {
+          unit = resolvedRegion({ sourcePath, observedAt, snapshot, range: request.range });
+        }
       }
       if (!unit) unit = resolvedFile({ sourcePath, observedAt, snapshot, resolution: request.range ? "file-fallback" : "file" });
     } catch (error) {
@@ -223,6 +270,39 @@ export class FreshCtxSession {
     return { ...file, id: unit.id };
   }
 
+  async currentRegion(unit, snapshot, observedAt) {
+    const startByte = unit.startByte;
+    const endByte = unit.endByte;
+    if (!Number.isInteger(startByte) || !Number.isInteger(endByte) || startByte < 0 || endByte <= startByte || endByte > snapshot.bytes.length) {
+      return unresolvedUnit({
+        id: unit.id,
+        sourcePath: unit.path,
+        kind: "region",
+        observedAt,
+        reason: "range_unresolved",
+      });
+    }
+    try {
+      const candidate = resolvedRegion({
+        sourcePath: unit.path,
+        observedAt,
+        snapshot,
+        range: { startByte, endByte },
+      });
+      candidate.id = unit.id;
+      await this.updateStoredUnit(candidate);
+      return candidate;
+    } catch {
+      return unresolvedUnit({
+        id: unit.id,
+        sourcePath: unit.path,
+        kind: "region",
+        observedAt,
+        reason: "resolution_failed",
+      });
+    }
+  }
+
   async currentCandidate(unit, observedAt) {
     let snapshot;
     try {
@@ -231,7 +311,7 @@ export class FreshCtxSession {
       return unresolvedUnit({
         id: unit.id,
         sourcePath: unit.path,
-        kind: "symbol",
+        kind: unit.kind ?? "file",
         selector: unit.selector,
         observedAt,
         reason: reasonFor(error),
@@ -241,6 +321,9 @@ export class FreshCtxSession {
       const candidate = resolvedFile({ sourcePath: unit.path, observedAt, snapshot, resolution: "file" });
       await this.updateStoredUnit(candidate);
       return candidate;
+    }
+    if (unit.kind === "region") {
+      return this.currentRegion(unit, snapshot, observedAt);
     }
     const parsed = await parseUnits({ path: unit.path, text: snapshot.text });
     const matches = parsed.status === "ok"
