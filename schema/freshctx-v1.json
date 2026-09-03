@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freshctx.dev/schema/freshctx-v1.json",
+  "title": "FreshCtx JSONL request v1",
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/observe" },
+    { "$ref": "#/$defs/prepare" },
+    { "$ref": "#/$defs/commit" },
+    { "$ref": "#/$defs/recover" },
+    { "$ref": "#/$defs/status" }
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["protocol", "id", "op"],
+      "properties": {
+        "protocol": { "const": "freshctx/1" },
+        "id": { "type": "string", "minLength": 1 },
+        "op": { "type": "string" }
+      }
+    },
+    "hello": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "op": { "const": "hello" },
+            "session_id": { "type": "string", "minLength": 1 },
+            "adapter": { "type": "string" },
+            "capabilities": {
+              "type": "object",
+              "required": ["request_rewrite", "stable_result_identity", "projection_insertion", "shared_workspace"],
+              "properties": {
+                "request_rewrite": { "const": true },
+                "stable_result_identity": { "const": true },
+                "projection_insertion": { "const": true },
+                "shared_workspace": { "const": true }
+              }
+            }
+          },
+          "required": ["session_id", "capabilities"]
+        }
+      ]
+    },
+    "range": {
+      "type": "object",
+      "description": "end_byte must be greater than start_byte; the protocol validator enforces this cross-field rule.",
+      "required": ["start_byte", "end_byte"],
+      "properties": {
+        "start_byte": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "end_byte": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "observe": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "op": { "const": "observe" },
+            "result_id": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "content_utf8_base64": { "type": "string" },
+            "range": { "$ref": "#/$defs/range" },
+            "turn": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["result_id", "path", "content_utf8_base64"]
+        }
+      ]
+    },
+    "prepare": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "op": { "const": "prepare" },
+            "request_id": { "type": "string", "minLength": 1 },
+            "result_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "budget_bytes": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["request_id", "result_ids", "budget_bytes"]
+        }
+      ]
+    },
+    "commit": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "op": { "const": "commit" },
+            "plan_id": { "type": "string", "minLength": 1 }
+          },
+          "required": ["plan_id"]
+        }
+      ]
+    },
+    "recover": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "op": { "const": "recover" },
+            "unit_id": { "type": "string", "minLength": 1 },
+            "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+          },
+          "required": ["unit_id", "revision"]
+        }
+      ]
+    },
+    "status": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        { "properties": { "op": { "const": "status" } } }
+      ]
+    }
+  }
+}
