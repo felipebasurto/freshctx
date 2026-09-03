@@ -20,17 +20,13 @@ function projectionBytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
 
-function markerPath(value) {
-  return encodeURIComponent(String(value)).replaceAll("%2F", "/");
-}
-
 export function stableMarker(unit) {
-  return `[freshctx:${unit.id} path=${markerPath(unit.path)}] Current content is supplied in the live projection.`;
+  return `[freshctx:${unit.id}]`;
 }
 
 export function unavailableMarker(unit, reason) {
   const safeReason = String(reason ?? "unresolved").replaceAll("\n", " ").replaceAll("\r", " ");
-  return `[freshctx:${unit.id} path=${markerPath(unit.path)}] Current content was not supplied (${safeReason}); reread this file before relying on it.`;
+  return `[freshctx:${unit.id} ${safeReason}]`;
 }
 
 export function renderUnit(unit) {
@@ -40,24 +36,16 @@ export function renderUnit(unit) {
     `path="${escapeAttribute(unit.path)}"`,
     `kind="${escapeAttribute(unit.kind)}"`,
     `lines="${unit.startLine}-${unit.endLine}"`,
-    `revision="${escapeAttribute(unit.revision)}"`,
     `resolution="${escapeAttribute(unit.resolution)}"`,
     `content-bytes="${contentBytes}"`,
-  ];
-  if (typeof unit.selector === "string" && unit.selector.length > 0) {
-    attributes.splice(3, 0, `selector="${escapeAttribute(unit.selector)}"`);
-  }
-  return `<freshctx-unit ${attributes.join(" ")}>\n${unit.content}\n</freshctx-unit>`;
+  ].join(" ");
+  return `<freshctx-unit ${attributes}>\n${unit.content}\n</freshctx-unit>`;
 }
 
 function renderEnvelope({ selected, omitted }) {
-  const units = selected.map(renderUnit);
-  const preamble = selected.length > 0
-    ? "Current bytes of observed units. Unread code is not shown and is not evidence of absence. Historical read markers refer here."
-    : "";
   return [
-    `<freshctx selected="${selected.length}" omitted="${omitted.length}">${preamble}`,
-    ...units,
+    `<freshctx selected="${selected.length}" omitted="${omitted.length}">`,
+    ...selected.map(renderUnit),
     "</freshctx>",
   ].join("\n");
 }

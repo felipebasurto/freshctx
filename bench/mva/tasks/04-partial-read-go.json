@@ -1,0 +1,10 @@
+{
+  "id": "partial-read-go",
+  "kind": "partial-read",
+  "budgetBytes": 4096,
+  "path": "mod.go",
+  "match": "func Chosen() int { return 1 }",
+  "files": {
+    "mod.go": "package demo\n\nfunc Chosen() int { return 1 }\n\nfunc Other() int {\n    a0 := 0\n    a1 := 1\n    a2 := 2\n    a3 := 3\n    a4 := 4\n    a5 := 5\n    a6 := 6\n    a7 := 7\n    a8 := 8\n    a9 := 9\n    a10 := 10\n    a11 := 11\n    a12 := 12\n    a13 := 13\n    a14 := 14\n    a15 := 15\n    a16 := 16\n    a17 := 17\n    a18 := 18\n    a19 := 19\n    a20 := 20\n    a21 := 21\n    a22 := 22\n    a23 := 23\n    a24 := 24\n    a25 := 25\n    a26 := 26\n    a27 := 27\n    a28 := 28\n    a29 := 29\n    a30 := 30\n    a31 := 31\n    a32 := 32\n    a33 := 33\n    a34 := 34\n    a35 := 35\n    a36 := 36\n    a37 := 37\n    a38 := 38\n    a39 := 39\n    return 2\n}\n"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "no-stale-control",
+  "kind": "direct-edit",
+  "budgetBytes": 4096,
+  "path": "a.py",
+  "files": {
+    "a.py": "def greet():\n    return 'FRESHCTX_MVA_OLD'\n"
+  },
+  "targetToken": "FRESHCTX_MVA_NEW"
+}

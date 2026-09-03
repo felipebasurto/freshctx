@@ -15,3 +15,6 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run pack:check
+      - run: npm run bench:layer-a
+      - run: npm run bench:mva
+      - run: npm run bench:announce

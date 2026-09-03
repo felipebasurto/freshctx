@@ -1,0 +1,18 @@
+{
+  "id": "overlap-file-then-symbol",
+  "budgetBytes": 4096,
+  "files": {
+    "a.py": "def chosen():\n    return 1\n\ndef other():\n    return 2\n"
+  },
+  "events": [
+    { "op": "read", "resultId": "full", "path": "a.py" },
+    { "op": "read", "resultId": "part", "path": "a.py", "match": "def chosen():\n    return 1" }
+  ],
+  "activeResultIds": ["full", "part"],
+  "gold": { "a.py": { "kind": "symbol", "matchAfter": "def chosen():\n    return 1" } },
+  "expect": {
+    "append_only": { "stale_leakage": false, "selected_count": 2 },
+    "corvus_full_file": { "stale_leakage": false, "freshness_exact": true, "selected_count": 1, "selected_kind": "file" },
+    "freshctx_prepare": { "stale_leakage": false, "freshness_exact": true, "selected_count": 1, "selected_kind": "symbol" }
+  }
+}

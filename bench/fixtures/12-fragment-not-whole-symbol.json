@@ -1,0 +1,17 @@
+{
+  "id": "fragment-not-whole-symbol",
+  "budgetBytes": 4096,
+  "files": {
+    "a.py": "def top():\n    return 'current'\n"
+  },
+  "events": [
+    { "op": "read", "resultId": "fragment", "path": "a.py", "match": "return 'current'" }
+  ],
+  "activeResultIds": ["fragment"],
+  "gold": { "a.py": { "kind": "symbol", "matchAfter": "def top():\n    return 'current'" } },
+  "expect": {
+    "append_only": { "stale_leakage": false, "freshness_exact": false },
+    "corvus_full_file": { "stale_leakage": false, "freshness_exact": true, "selected_kind": "file" },
+    "freshctx_prepare": { "stale_leakage": false, "freshness_exact": true, "selected_kind": "symbol" }
+  }
+}
