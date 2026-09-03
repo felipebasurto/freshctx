@@ -271,3 +271,93 @@ test("content that looks like a FreshCtx delimiter remains exactly framed by con
   const [unit] = decodeProjectionUnits(decodedProjection(plan));
   assert.equal(unit.content, source);
 });
+
+const SETTLEMENT = `/**
+ * Ledger settlement helpers.
+ */
+
+export type SettlementMode = "daily" | "weekly";
+
+export type SettlementInput = {
+  accountId: string;
+  amountCents: number;
+};
+
+export function settleDailyLedger() {
+  return "ST0";
+}
+
+export function computeDailyLedgerTotal(amountCents: number): number {
+  const MARKER_TOTAL = "CT0";
+  return amountCents;
+}
+`;
+
+test("a header range stays a region slice and does not teach unread symbols are absent", async (t) => {
+  const header = SETTLEMENT.slice(0, SETTLEMENT.indexOf("export function settleDailyLedger"));
+  const headerBytes = Buffer.byteLength(header);
+  const root = await workspaceFor(t, { "src/settlement.ts": SETTLEMENT });
+  const session = await sessionFor(t, root);
+  const observed = await session.observe({
+    resultId: "header",
+    path: "src/settlement.ts",
+    content: content(header),
+    range: { startByte: 0, endByte: headerBytes },
+    turn: 1,
+  });
+  const plan = await session.prepare({
+    requestId: "header-plan",
+    resultIds: ["header"],
+    budgetBytes: 8192,
+  });
+  const text = decodedProjection(plan);
+  const [unit] = decodeProjectionUnits(text);
+
+  assert.equal(unit.kind, "region");
+  assert.equal(unit.id, observed.unit_id);
+  assert.match(unit.lines, /^1-\d+$/u);
+  assert.doesNotMatch(unit.content, /computeDailyLedgerTotal/u);
+  assert.doesNotMatch(text, /current workspace state/iu);
+  assert.doesNotMatch(text, /computeDailyLedgerTotal/u);
+  assert.match(SETTLEMENT, /computeDailyLedgerTotal/u);
+
+  const marker = "CT0";
+  const symbolStart = Buffer.byteLength(SETTLEMENT.slice(0, SETTLEMENT.indexOf(marker)));
+  const later = await session.observe({
+    resultId: "total",
+    path: "src/settlement.ts",
+    content: content(marker),
+    range: { startByte: symbolStart, endByte: symbolStart + Buffer.byteLength(marker) },
+    turn: 2,
+  });
+  assert.notEqual(later.unit_id, observed.unit_id);
+  const both = await session.prepare({
+    requestId: "header-and-total",
+    resultIds: ["header", "total"],
+    budgetBytes: 8192,
+  });
+  const units = decodeProjectionUnits(decodedProjection(both));
+  const symbol = units.find((item) => item.id === later.unit_id);
+  assert.equal(symbol.kind, "symbol");
+  assert.match(symbol.content, /computeDailyLedgerTotal/u);
+  assert.match(symbol.content, /MARKER_TOTAL = "CT0"/u);
+});
+
+test("prepare after a store reopen refreshes current disk bytes for a new request", async (t) => {
+  const before = "function top() { return 1; }\n";
+  const after = "function top() { return 2; }\n";
+  const root = await workspaceFor(t, { "a.js": before });
+  const workspace = await openWorkspace(root);
+  const firstStore = await openSessionStore(workspace, "live-restart");
+  const first = new FreshCtxSession({ workspace, store: firstStore, sessionId: "live-restart" });
+  await first.observe({ resultId: "r", path: "a.js", content: content(before), range: null, turn: 1 });
+  await firstStore.close();
+  await writeFile(path.join(root, "a.js"), after);
+  const secondStore = await openSessionStore(workspace, "live-restart");
+  t.after(async () => secondStore.close());
+  const second = new FreshCtxSession({ workspace, store: secondStore, sessionId: "live-restart" });
+  const plan = await second.prepare({ requestId: "after-restart", resultIds: ["r"], budgetBytes: 4096 });
+  const [unit] = decodeProjectionUnits(decodedProjection(plan));
+  assert.match(unit.content, /return 2/u);
+  assert.doesNotMatch(unit.content, /return 1/u);
+});
