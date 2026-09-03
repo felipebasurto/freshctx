@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://freshctx.dev/schema/run-record-v1.json",
+  "title": "FreshCtx bench run record v1",
+  "type": "object",
+  "required": ["schema", "slice", "arm", "fixtureId", "scores"],
+  "properties": {
+    "schema": { "const": 1 },
+    "slice": { "type": "string", "minLength": 1 },
+    "arm": { "enum": ["append_only", "corvus_full_file", "freshctx_prepare"] },
+    "fixtureId": { "type": "string", "minLength": 1 },
+    "scores": {
+      "type": "object",
+      "required": [
+        "stale_leakage",
+        "freshness_exact",
+        "last_known_in_request",
+        "budget_ok",
+        "prompt_bytes",
+        "live_block_bytes",
+        "selected_count"
+      ],
+      "properties": {
+        "stale_leakage": { "type": "boolean" },
+        "freshness_exact": { "type": "boolean" },
+        "last_known_in_request": { "type": "boolean" },
+        "budget_ok": { "type": "boolean" },
+        "prompt_bytes": { "type": "integer", "minimum": 0 },
+        "live_block_bytes": { "type": "integer", "minimum": 0 },
+        "payload_bytes": { "type": "integer", "minimum": 0 },
+        "envelope_bytes": { "type": "integer", "minimum": 0 },
+        "selected_count": { "type": "integer", "minimum": 0 },
+        "selected_kind": { "type": ["string", "null"] },
+        "duplicate_file_reads": { "type": "integer", "minimum": 0 },
+        "cycles": { "type": "integer", "minimum": 0 },
+        "final_request_bytes": { "type": "integer", "minimum": 0 },
+        "accumulated_request_bytes": { "type": "integer", "minimum": 0 },
+        "working_set_size": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

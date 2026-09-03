@@ -1,0 +1,18 @@
+{
+  "id": "binary-after-observe",
+  "budgetBytes": 4096,
+  "files": {
+    "a.py": "def top():\n    return 'FRESHCTX_BEFORE_BINARY'\n"
+  },
+  "events": [
+    { "op": "read", "resultId": "r", "path": "a.py" },
+    { "op": "write_binary", "path": "a.py", "bytesHex": "000102" }
+  ],
+  "activeResultIds": ["r"],
+  "gold": { "a.py": { "omit": true } },
+  "expect": {
+    "append_only": { "stale_leakage": true, "last_known_in_request": true },
+    "corvus_full_file": { "stale_leakage": false, "last_known_in_request": false, "selected_count": 0 },
+    "freshctx_prepare": { "stale_leakage": false, "last_known_in_request": false, "selected_count": 0 }
+  }
+}

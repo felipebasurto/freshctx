@@ -113,7 +113,7 @@ test("a partial fragment is never recoverable as if it were the whole symbol", a
   assert.equal(projected.kind, "symbol");
   assert.match(projected.content, /def top/u);
   assert.notEqual(projected.content, fragment);
-  const recovered = await session.recover({ unitId: observed.unit_id, revision: projected.revision });
+  const recovered = await session.recover({ unitId: observed.unit_id, revision: revisionFor(projected.content) });
   assert.equal(Buffer.from(recovered.content_utf8_base64, "base64").toString("utf8"), projected.content);
 });
 
@@ -212,7 +212,7 @@ test("a zero byte budget produces no projection bytes", async (t) => {
   const plan = await session.prepare({ requestId: "tiny", resultIds: ["r"], budgetBytes: 0 });
   assert.equal(Buffer.from(plan.projection_utf8_base64, "base64").length, 0);
   assert.equal(plan.selected.length, 0);
-  assert.match(plan.replacements[0].marker, /Current content was not supplied \(budget\)/u);
+  assert.match(plan.replacements[0].marker, /\[freshctx:\S+ budget\]/u);
 });
 
 test("selection is idempotent for a reordered set of active host results and exact at its byte budget", async (t) => {
