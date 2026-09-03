@@ -1,0 +1,18 @@
+{
+  "id": "renamed-symbol-file-fallback",
+  "budgetBytes": 4096,
+  "files": {
+    "a.py": "def greet():\n    return 'old'\n\ndef other():\n    return 2\n"
+  },
+  "events": [
+    { "op": "read", "resultId": "native-1", "path": "a.py", "match": "def greet():\n    return 'old'" },
+    { "op": "edit", "path": "a.py", "content": "def renamed():\n    return 'latest'\n" }
+  ],
+  "activeResultIds": ["native-1"],
+  "gold": { "a.py": { "kind": "file" } },
+  "expect": {
+    "append_only": { "stale_leakage": true, "freshness_exact": false },
+    "corvus_full_file": { "stale_leakage": false, "freshness_exact": true, "selected_kind": "file" },
+    "freshctx_prepare": { "stale_leakage": false, "freshness_exact": true, "selected_kind": "file" }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "delete-after-observe",
+  "budgetBytes": 4096,
+  "files": {
+    "a.py": "def top():\n    return 'FRESHCTX_DELETED_BODY'\n"
+  },
+  "events": [
+    { "op": "read", "resultId": "r", "path": "a.py" },
+    { "op": "delete", "path": "a.py" }
+  ],
+  "activeResultIds": ["r"],
+  "gold": { "a.py": { "omit": true } },
+  "expect": {
+    "append_only": { "stale_leakage": true, "last_known_in_request": true, "freshness_exact": false },
+    "corvus_full_file": { "stale_leakage": false, "last_known_in_request": false, "freshness_exact": true, "selected_count": 0 },
+    "freshctx_prepare": { "stale_leakage": false, "last_known_in_request": false, "freshness_exact": true, "selected_count": 0 }
+  }
+}
