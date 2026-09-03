@@ -91,7 +91,7 @@ function freshness(view, gold) {
     }
     return true;
   }
-  if (view.arm === "corvus_full_file") {
+  if (view.arm === "corvus_full_file" || view.arm === "today+corvus") {
     for (const [rel, spec] of entries) {
       if (spec.omit) continue;
       const unit = (view.selected ?? []).find((item) => item.path === rel);
