@@ -19,6 +19,10 @@ export function stableId(prefix, fields) {
   return `${prefix}_${sha256(canonical).slice(0, 24)}`;
 }
 
+export function compactUnitId(fields) {
+  return sha256(JSON.stringify(fields)).slice(0, 8);
+}
+
 export function randomId(prefix) {
   return `${prefix}_${randomBytes(12).toString("hex")}`;
 }

@@ -112,8 +112,9 @@ Files must be relative, regular, UTF-8, below the workspace root, not symlinks,
 at most 512 KiB, and stable across a double-stat snapshot. Selection considers
 only active native results, sorts deterministically by recent observation and
 stable ID, removes byte-range overlaps, and never exceeds the rendered byte
-budget. Projection frames include `content-bytes`, so code containing FreshCtx
-delimiter text remains unambiguous.
+budget. After the set is chosen, units render by path then id. Each frame is
+length-prefixed (`path:bytes` for a file, `path:kind:bytes` for a symbol or
+region), so code containing FreshCtx header text remains unambiguous.
 
 FreshCtx archives immutable SHA-256 blobs and session state under
 `.freshctx/` until an explicit `freshctx clean`. See [SECURITY.md](SECURITY.md)

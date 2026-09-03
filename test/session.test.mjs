@@ -27,7 +27,7 @@ test("a partial read projects the current Tree-sitter symbol, never its historic
   await writeFile(path.join(root, "src/a.py"), after);
   const plan = await session.prepare({ requestId: "provider-1", resultIds: ["native-1"], budgetBytes: 4096 });
   const units = decodeProjectionUnits(decodedProjection(plan));
-  assert.equal(observation.unit_id, units[0].id);
+  assert.equal(plan.selected[0], observation.unit_id);
   assert.equal(units[0].kind, "symbol");
   assert.match(units[0].content, /'new'/u);
   assert.doesNotMatch(units[0].content, /'old'/u);
@@ -36,8 +36,8 @@ test("a partial read projects the current Tree-sitter symbol, never its historic
   const renamed = await session.prepare({ requestId: "provider-rename", resultIds: ["native-1"], budgetBytes: 4096 });
   const renamedUnits = decodeProjectionUnits(decodedProjection(renamed));
   assert.equal(renamedUnits[0].kind, "file");
-  assert.equal(renamedUnits[0].id, observation.unit_id);
-  assert.match(renamed.replacements[0].marker, new RegExp(`freshctx:${observation.unit_id}`, "u"));
+  assert.equal(renamed.selected[0], observation.unit_id);
+  assert.match(renamed.replacements[0].marker, new RegExp(`\\[${observation.unit_id}`, "u"));
   assert.match(renamedUnits[0].content, /renamed/u);
 });
 
@@ -61,7 +61,7 @@ test("newer active symbols win over an older active file and overlapping bytes a
   assert.equal(plan.omitted[0].reason, "overlap");
 });
 
-test("projection xml is byte-identical when membership and disk stay the same and only recency changes", async (t) => {
+test("projection bytes are identical when membership and disk stay the same and only recency changes", async (t) => {
   const files = {
     "src/a.py": "def a():\n    return 1\n",
     "src/m.py": "def m():\n    return 2\n",
@@ -256,7 +256,7 @@ test("a zero byte budget produces no projection bytes", async (t) => {
   const plan = await session.prepare({ requestId: "tiny", resultIds: ["r"], budgetBytes: 0 });
   assert.equal(Buffer.from(plan.projection_utf8_base64, "base64").length, 0);
   assert.equal(plan.selected.length, 0);
-  assert.match(plan.replacements[0].marker, /\[freshctx:\S+ budget\]/u);
+  assert.match(plan.replacements[0].marker, /\[\S+ budget\]/u);
 });
 
 test("selection is idempotent for a reordered set of active host results and exact at its byte budget", async (t) => {
@@ -307,7 +307,7 @@ test("current symbols resolve from every vendored Tree-sitter grammar", async (t
 });
 
 test("content that looks like a FreshCtx delimiter remains exactly framed by content bytes", async (t) => {
-  const source = "const text = '<freshctx-unit id=\\\"fake\\\">';\nfunction top() { return text; }\n";
+  const source = "const text = 'a.js:12\\nfake';\nfunction top() { return text; }\n";
   const root = await workspaceFor(t, { "a.js": source });
   const session = await sessionFor(t, root);
   await session.observe({ resultId: "r", path: "a.js", content: content(source), range: null, turn: 1 });
@@ -358,7 +358,7 @@ test("a header range stays a region slice and does not teach unread symbols are 
   const [unit] = decodeProjectionUnits(text);
 
   assert.equal(unit.kind, "region");
-  assert.equal(unit.id, observed.unit_id);
+  assert.equal(plan.selected[0], observed.unit_id);
   assert.match(unit.lines, /^1-\d+$/u);
   assert.doesNotMatch(unit.content, /computeDailyLedgerTotal/u);
   assert.doesNotMatch(text, /current workspace state/iu);
@@ -381,7 +381,8 @@ test("a header range stays a region slice and does not teach unread symbols are 
     budgetBytes: 8192,
   });
   const units = decodeProjectionUnits(decodedProjection(both));
-  const symbol = units.find((item) => item.id === later.unit_id);
+  const symbol = units.find((item) => item.kind === "symbol");
+  assert.ok(both.selected.includes(later.unit_id));
   assert.equal(symbol.kind, "symbol");
   assert.match(symbol.content, /computeDailyLedgerTotal/u);
   assert.match(symbol.content, /MARKER_TOTAL = "CT0"/u);
@@ -404,4 +405,50 @@ test("prepare after a store reopen refreshes current disk bytes for a new reques
   const [unit] = decodeProjectionUnits(decodedProjection(plan));
   assert.match(unit.content, /return 2/u);
   assert.doesNotMatch(unit.content, /return 1/u);
+});
+
+test("symbol file-fallback does not clobber a sibling file unit or forget the selector", async (t) => {
+  const before = "def greet():\n    return 1\n\ndef other():\n    return 2\n";
+  const renamed = "def hello():\n    return 1\n\ndef other():\n    return 2\n";
+  const restored = "def greet():\n    return 3\n\ndef other():\n    return 2\n";
+  const root = await workspaceFor(t, { "a.py": before });
+  const session = await sessionFor(t, root);
+  const fileObs = await session.observe({
+    resultId: "full",
+    path: "a.py",
+    content: content(before),
+    range: null,
+    turn: 1,
+  });
+  const greet = before.slice(0, before.indexOf("\n\ndef other"));
+  const symbolObs = await session.observe({
+    resultId: "part",
+    path: "a.py",
+    content: content(greet),
+    range: { startByte: 0, endByte: Buffer.byteLength(greet) },
+    turn: 2,
+  });
+  assert.notEqual(fileObs.unit_id, symbolObs.unit_id);
+  await writeFile(path.join(root, "a.py"), renamed);
+  const fallback = await session.prepare({
+    requestId: "renamed",
+    resultIds: ["full", "part"],
+    budgetBytes: 4096,
+  });
+  const fallbackUnits = decodeProjectionUnits(decodedProjection(fallback));
+  assert.equal(fallbackUnits.length, 1);
+  assert.equal(fallbackUnits[0].kind, "file");
+  assert.equal(fallbackUnits[0].content, renamed);
+  const recovered = await session.recover({ unitId: fileObs.unit_id, revision: revisionFor(before) });
+  assert.equal(Buffer.from(recovered.content_utf8_base64, "base64").toString("utf8"), before);
+  await writeFile(path.join(root, "a.py"), restored);
+  const again = await session.prepare({
+    requestId: "restored",
+    resultIds: ["part"],
+    budgetBytes: 4096,
+  });
+  const [unit] = decodeProjectionUnits(decodedProjection(again));
+  assert.equal(unit.kind, "symbol");
+  assert.match(unit.content, /return 3/u);
+  assert.doesNotMatch(unit.content, /def other/u);
 });

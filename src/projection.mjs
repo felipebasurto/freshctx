@@ -1,53 +1,42 @@
 import { rankActiveUnits } from "./selection.mjs";
 
-function escapeAttribute(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function unescapeAttribute(value) {
-  return String(value)
-    .replaceAll("&quot;", '"')
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&");
-}
-
 function projectionBytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
 
+function assertKind(kind) {
+  switch (kind) {
+    case "file":
+    case "symbol":
+    case "region":
+      return kind;
+    default: {
+      const _exhaustive = kind;
+      throw new TypeError(`unknown FreshCtx unit kind: ${_exhaustive}`);
+    }
+  }
+}
+
 export function stableMarker(unit) {
-  return `[freshctx:${unit.id}]`;
+  return `[${unit.id}]`;
 }
 
 export function unavailableMarker(unit, reason) {
   const safeReason = String(reason ?? "unresolved").replaceAll("\n", " ").replaceAll("\r", " ");
-  return `[freshctx:${unit.id} ${safeReason}]`;
+  return `[${unit.id} ${safeReason}]`;
 }
 
 export function renderUnit(unit) {
   const contentBytes = projectionBytes(unit.content);
-  const attributes = [
-    `id="${escapeAttribute(unit.id)}"`,
-    `path="${escapeAttribute(unit.path)}"`,
-    `kind="${escapeAttribute(unit.kind)}"`,
-    `lines="${unit.startLine}-${unit.endLine}"`,
-    `resolution="${escapeAttribute(unit.resolution)}"`,
-    `content-bytes="${contentBytes}"`,
-  ].join(" ");
-  return `<freshctx-unit ${attributes}>\n${unit.content}\n</freshctx-unit>`;
+  const kind = assertKind(unit.kind);
+  const header = kind === "file"
+    ? `${unit.path}:${contentBytes}`
+    : `${unit.path}:${kind}:${contentBytes}`;
+  return `${header}\n${unit.content}`;
 }
 
-function renderEnvelope({ selected, omitted }) {
-  return [
-    `<freshctx selected="${selected.length}" omitted="${omitted.length}">`,
-    ...selected.map(renderUnit),
-    "</freshctx>",
-  ].join("\n");
+function renderEnvelope(selected) {
+  return selected.map(renderUnit).join("");
 }
 
 function compareRenderOrder(left, right) {
@@ -63,23 +52,24 @@ export function buildProjection(units, budgetBytes) {
   const ranked = rankActiveUnits(units);
   const selected = [];
   const omitted = [...ranked.omitted];
-  if (projectionBytes(renderEnvelope({ selected, omitted: [] })) > budgetBytes) {
-    return { text: "", bytes: 0, selected, omitted: [...omitted, ...ranked.candidates.map((unit) => ({ unitId: unit.id, reason: "budget" }))] };
+  if (budgetBytes === 0) {
+    return {
+      text: "",
+      bytes: 0,
+      selected,
+      omitted: [...omitted, ...ranked.candidates.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
+    };
   }
   for (const unit of ranked.candidates) {
-    const trial = renderEnvelope({ selected: [...selected, unit], omitted });
+    const trial = renderEnvelope([...selected, unit]);
     if (projectionBytes(trial) <= budgetBytes) {
       selected.push(unit);
     } else {
       omitted.push({ unitId: unit.id, reason: "budget" });
     }
   }
-  let text = renderEnvelope({ selected, omitted });
-  while (selected.length > 0 && projectionBytes(text) > budgetBytes) {
-    const removed = selected.pop();
-    omitted.push({ unitId: removed.id, reason: "budget" });
-    text = renderEnvelope({ selected, omitted });
-  }
+  selected.sort(compareRenderOrder);
+  const text = renderEnvelope(selected);
   if (projectionBytes(text) > budgetBytes) {
     return {
       text: "",
@@ -88,8 +78,6 @@ export function buildProjection(units, budgetBytes) {
       omitted: [...omitted, ...selected.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
     };
   }
-  selected.sort(compareRenderOrder);
-  text = renderEnvelope({ selected, omitted });
   return {
     text,
     bytes: projectionBytes(text),
@@ -98,42 +86,54 @@ export function buildProjection(units, budgetBytes) {
   };
 }
 
-function parseAttributes(header) {
-  const attributes = {};
-  for (const match of header.matchAll(/([a-z][a-z0-9-]*)="([^"]*)"/giu)) {
-    attributes[match[1]] = unescapeAttribute(match[2]);
+function parseHeader(header) {
+  const lastColon = header.lastIndexOf(":");
+  if (lastColon <= 0) throw new Error("invalid FreshCtx unit header");
+  const contentBytes = Number(header.slice(lastColon + 1));
+  if (!Number.isSafeInteger(contentBytes) || contentBytes < 0) {
+    throw new Error("invalid FreshCtx content-bytes header");
   }
-  return attributes;
+  const prefix = header.slice(0, lastColon);
+  const kindColon = prefix.lastIndexOf(":");
+  if (kindColon !== -1) {
+    const maybeKind = prefix.slice(kindColon + 1);
+    if (maybeKind === "symbol" || maybeKind === "region") {
+      const sourcePath = prefix.slice(0, kindColon);
+      if (!sourcePath) throw new Error("invalid FreshCtx unit path");
+      return { path: sourcePath, kind: maybeKind, contentBytes };
+    }
+  }
+  if (!prefix) throw new Error("invalid FreshCtx unit path");
+  return { path: prefix, kind: "file", contentBytes };
+}
+
+function linesForContent(content) {
+  return `1-${content.length === 0 ? 1 : content.split("\n").length}`;
 }
 
 export function decodeProjectionUnits(text) {
   const source = Buffer.from(String(text), "utf8");
-  const opening = Buffer.from("<freshctx-unit ");
-  const headerEndMarker = Buffer.from(">\n");
-  const closing = Buffer.from("\n</freshctx-unit>");
   const decoded = [];
   let cursor = 0;
   while (cursor < source.length) {
-    const start = source.indexOf(opening, cursor);
-    if (start === -1) break;
-    const headerEnd = source.indexOf(headerEndMarker, start + opening.length);
+    const headerEnd = source.indexOf(0x0a, cursor);
     if (headerEnd === -1) throw new Error("unterminated FreshCtx unit header");
-    const attributes = parseAttributes(source.subarray(start, headerEnd + 1).toString("utf8"));
-    const contentBytes = Number(attributes["content-bytes"]);
-    if (!Number.isSafeInteger(contentBytes) || contentBytes < 0) {
-      throw new Error("invalid FreshCtx content-bytes attribute");
+    const header = source.subarray(cursor, headerEnd).toString("utf8");
+    const attributes = parseHeader(header);
+    const contentStart = headerEnd + 1;
+    const contentEnd = contentStart + attributes.contentBytes;
+    if (contentEnd > source.length) {
+      throw new Error("FreshCtx unit length does not align with its content-bytes header");
     }
-    const contentStart = headerEnd + headerEndMarker.length;
-    const contentEnd = contentStart + contentBytes;
-    if (contentEnd > source.length || !source.subarray(contentEnd, contentEnd + closing.length).equals(closing)) {
-      throw new Error("FreshCtx unit length does not align with its closing frame");
-    }
+    const content = source.subarray(contentStart, contentEnd).toString("utf8");
     decoded.push({
-      ...attributes,
-      contentBytes,
-      content: source.subarray(contentStart, contentEnd).toString("utf8"),
+      path: attributes.path,
+      kind: attributes.kind,
+      contentBytes: attributes.contentBytes,
+      content,
+      lines: linesForContent(content),
     });
-    cursor = contentEnd + closing.length;
+    cursor = contentEnd;
   }
   return decoded;
 }
