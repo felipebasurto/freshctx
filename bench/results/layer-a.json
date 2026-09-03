@@ -30,10 +30,10 @@
         "stale_leakage": 0,
         "last_known_in_request": 0,
         "budget_ok": 12,
-        "prompt_bytes": 3079,
-        "live_block_bytes": 2143,
+        "prompt_bytes": 1013,
+        "live_block_bytes": 441,
         "payload_bytes": 333,
-        "envelope_bytes": 1810
+        "envelope_bytes": 108
       }
     }
   },
@@ -84,10 +84,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 306,
-        "live_block_bytes": 233,
+        "prompt_bytes": 99,
+        "live_block_bytes": 54,
         "payload_bytes": 46,
-        "envelope_bytes": 187,
+        "envelope_bytes": 8,
         "selected_count": 1,
         "selected_kind": "file"
       }
@@ -138,10 +138,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 301,
-        "live_block_bytes": 224,
+        "prompt_bytes": 97,
+        "live_block_bytes": 48,
         "payload_bytes": 29,
-        "envelope_bytes": 195,
+        "envelope_bytes": 19,
         "selected_count": 1,
         "selected_kind": "symbol"
       }
@@ -192,10 +192,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 121,
-        "live_block_bytes": 47,
+        "prompt_bytes": 46,
+        "live_block_bytes": 0,
         "payload_bytes": 0,
-        "envelope_bytes": 47,
+        "envelope_bytes": 0,
         "selected_count": 0,
         "selected_kind": null
       }
@@ -246,10 +246,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 125,
-        "live_block_bytes": 47,
+        "prompt_bytes": 50,
+        "live_block_bytes": 0,
         "payload_bytes": 0,
-        "envelope_bytes": 47,
+        "envelope_bytes": 0,
         "selected_count": 0,
         "selected_kind": null
       }
@@ -300,10 +300,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 305,
-        "live_block_bytes": 232,
+        "prompt_bytes": 98,
+        "live_block_bytes": 53,
         "payload_bytes": 45,
-        "envelope_bytes": 187,
+        "envelope_bytes": 8,
         "selected_count": 1,
         "selected_kind": "file"
       }
@@ -354,7 +354,7 @@
         "freshness_exact": false,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 73,
+        "prompt_bytes": 45,
         "live_block_bytes": 0,
         "payload_bytes": 0,
         "envelope_bytes": 0,
@@ -408,10 +408,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 350,
-        "live_block_bytes": 217,
+        "prompt_bytes": 118,
+        "live_block_bytes": 41,
         "payload_bytes": 26,
-        "envelope_bytes": 191,
+        "envelope_bytes": 15,
         "selected_count": 1,
         "selected_kind": "symbol"
       }
@@ -462,10 +462,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 327,
-        "live_block_bytes": 261,
+        "prompt_bytes": 120,
+        "live_block_bytes": 82,
         "payload_bytes": 74,
-        "envelope_bytes": 187,
+        "envelope_bytes": 8,
         "selected_count": 1,
         "selected_kind": "file"
       }
@@ -516,10 +516,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 282,
-        "live_block_bytes": 210,
+        "prompt_bytes": 75,
+        "live_block_bytes": 31,
         "payload_bytes": 19,
-        "envelope_bytes": 191,
+        "envelope_bytes": 12,
         "selected_count": 1,
         "selected_kind": "file"
       }
@@ -570,10 +570,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 304,
-        "live_block_bytes": 231,
+        "prompt_bytes": 88,
+        "live_block_bytes": 43,
         "payload_bytes": 35,
-        "envelope_bytes": 196,
+        "envelope_bytes": 8,
         "selected_count": 1,
         "selected_kind": "file"
       }
@@ -624,10 +624,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 290,
-        "live_block_bytes": 219,
+        "prompt_bytes": 86,
+        "live_block_bytes": 43,
         "payload_bytes": 28,
-        "envelope_bytes": 191,
+        "envelope_bytes": 15,
         "selected_count": 1,
         "selected_kind": "symbol"
       }
@@ -678,10 +678,10 @@
         "freshness_exact": true,
         "last_known_in_request": false,
         "budget_ok": true,
-        "prompt_bytes": 295,
-        "live_block_bytes": 222,
+        "prompt_bytes": 91,
+        "live_block_bytes": 46,
         "payload_bytes": 31,
-        "envelope_bytes": 191,
+        "envelope_bytes": 15,
         "selected_count": 1,
         "selected_kind": "symbol"
       }

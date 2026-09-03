@@ -16,39 +16,39 @@ Same long session fixture as horizon: 64 cycles, 8 files. Addon prepare does not
 
 Today's harness without FreshCtx still leaks. `stale_leakage` true. `freshness_exact` false. Last-cycle `working_set_size` 64. `usd_total_micros` 17398175.
 
-The same host with FreshCtx stops that leak. `stale_leakage` false. `freshness_exact` true. `working_set_size` 8. `live_block_bytes` 67455. `envelope_bytes` 1207. `cache_miss_tokens` 193980. `usd_total_micros` 2158134. On this host the add-on is cheaper than leaving every body in history. That is a with-versus-without USD fact, not a claim against prune.
+The same host with FreshCtx stops that leak. `stale_leakage` false. `freshness_exact` true. `working_set_size` 8. `live_block_bytes` 66336. `envelope_bytes` 88. `cache_miss_tokens` 190716. `usd_total_micros` 2089626. On this host the add-on is cheaper than leaving every body in history. That is a with-versus-without USD fact, not a claim against prune.
 
 `pi_compact` without FreshCtx still fires: `compact_calls` 63. `api_calls` 127. `usd_total_micros` 1845261. `freshness_exact` false. Compact stubs are not gold.
 
-`pi_compact` with FreshCtx still compact: `compact_calls` 34. `api_calls` 98. `freshness_exact` true. `usd_total_micros` 2203243. The with arm costs 357982 more millionths of a dollar than compact alone. Freshness is the point.
+`pi_compact` with FreshCtx still compact: `compact_calls` 32. `api_calls` 96. `freshness_exact` true. `usd_total_micros` 2155671. The with arm costs 310410 more millionths of a dollar than compact alone. Freshness is the point.
 
 `hermes_prune` without FreshCtx still fires: `prune_commits` 63. `usd_total_micros` 1798183. Lowest USD on this host without the add-on. `freshness_exact` false. Stubs are not current bytes.
 
-`hermes_prune` with FreshCtx still prunes: `prune_commits` 35. `freshness_exact` true. `usd_total_micros` 2138529. The with arm costs 340346 more than prune alone. FreshCtx is the freshness add-on. Prune is still the size tool.
+`hermes_prune` with FreshCtx still prunes: `prune_commits` 33. `freshness_exact` true. `usd_total_micros` 2111455. The with arm costs 313272 more than prune alone. FreshCtx is the freshness add-on. Prune is still the size tool.
 
-Two add-ons on today's host. `today+corvus`: `freshness_exact` true, `working_set_size` 8, `live_block_bytes` 66327, `cache_miss_tokens` 190694, `usd_total_micros` 2091439. `today+freshctx`: `freshness_exact` true, `working_set_size` 8, `live_block_bytes` 67455, `cache_miss_tokens` 193980, `usd_total_micros` 2158134. CORVUS is a competing add-on, not a prune clone. Do not score it against Hermes.
+Two add-ons on today's host. `today+corvus`: `freshness_exact` true, `working_set_size` 8, `live_block_bytes` 66327, `cache_miss_tokens` 190694, `usd_total_micros` 2091439. `today+freshctx`: `freshness_exact` true, `working_set_size` 8, `live_block_bytes` 66336, `cache_miss_tokens` 190716, `usd_total_micros` 2089626. FreshCtx is the cheaper exact add-on on this host. CORVUS is a competing add-on, not a prune clone. Do not score it against Hermes.
 
 ## Two agents, one disk
 
-Story `b-edits-a-read`. Today's harness without FreshCtx: `cross_agent_stale` true, `usd_total_micros` 44363. The same host with FreshCtx: `cross_agent_stale` false, `freshness_exact` true, `usd_total_micros` 37372. Compact-without and prune-without go `freshness_exact` false after they stub A's read. Compact-with and prune-with restore `freshness_exact` true.
+Story `b-edits-a-read`. Today's harness without FreshCtx: `cross_agent_stale` true, `usd_total_micros` 44363. The same host with FreshCtx: `cross_agent_stale` false, `freshness_exact` true, `usd_total_micros` 36704. Compact-without and prune-without go `freshness_exact` false after they stub A's read. Compact-with and prune-with restore `freshness_exact` true.
 
 Story `b-only-file`. B's file is absent from A's FreshCtx selected units on every host.
 
-Story `a-drops-result-id`. Without FreshCtx, today's harness keeps `working_set_size` 2 (`usd_total_micros` 19564). With FreshCtx, dropping the `result_id` leaves `working_set_size` 1 and `keep.py` only (`usd_total_micros` 10410). CORVUS on A still holds both paths at `usd_total_micros` 16505.
+Story `a-drops-result-id`. Without FreshCtx, today's harness keeps `working_set_size` 2 (`usd_total_micros` 19564). With FreshCtx, dropping the `result_id` leaves `working_set_size` 1 and `keep.py` only (`usd_total_micros` 10246). CORVUS on A still holds both paths at `usd_total_micros` 16505.
 
 ## Layer A stays a leak test
 
-12 Layer A fixtures. No LLM. `append_only` left a stale read body in 8 fixtures. `freshness_exact` held in 2. `corvus_full_file` had `stale_leakage` 0 and `freshness_exact` 12, with `budget_ok` 11. `freshctx_prepare` had `stale_leakage` 0 and `freshness_exact` 11. The miss is budget 0, where the projection is 0 bytes by design. `prompt_bytes` summed to 819, 1048, and 3079. `envelope_bytes` were 0, 88, and 1810. The wrapper is a measured cost.
+12 Layer A fixtures. No LLM. `append_only` left a stale read body in 8 fixtures. `freshness_exact` held in 2. `corvus_full_file` had `stale_leakage` 0 and `freshness_exact` 12, with `budget_ok` 11. `freshctx_prepare` had `stale_leakage` 0 and `freshness_exact` 11. The miss is budget 0, where the projection is 0 bytes by design. `prompt_bytes` summed to 819, 1048, and 1013. `envelope_bytes` were 0, 88, and 108. The wrapper is a measured cost.
 
 Scripted MVA `freshctx-mva-v1` used 22 `cycles` on today's harness and 14 on CORVUS and FreshCtx, with 4 `duplicate_file_reads` only on today.
 
-Short tasks `freshctx-econ-v1` still exist as measured USD on the same engines. Today's harness 309844. `pi_compact` 282890. `hermes_prune` 240867. `corvus_full_file` 262370. `freshctx_prepare` 224693. Those five totals are not a public ranking of FreshCtx against prune. Hermes wins `usd_input_micros` 174867 by stubbing. The public pair design is `freshctx-addon-v2`.
+Short tasks `freshctx-econ-v1` still exist as measured USD on the same engines. Today's harness 309844. `pi_compact` 282890. `hermes_prune` 240867. `corvus_full_file` 262370. `freshctx_prepare` 221760. Those five totals are not a public ranking of FreshCtx against prune. Hermes wins `usd_input_micros` 174867 by stubbing. The public pair design is `freshctx-addon-v2`.
 
 ## Retired slices
 
 Slice `freshctx-addon-v1` remains the rotating-window pair (`drop_result_ids`, last 3 ids). Its LIVE suffix changed every cycle. That slice is retired the same way as the five-way bake-off. Current addon.json is `freshctx-addon-v2`.
 
-Slice `freshctx-horizon-v1` remains on disk. It compared five arms as rivals. Last-cycle today's harness `usd_total_micros` 16371159. `pi_compact` 1834478. `hermes_prune` 771105. `corvus_full_file` 1064415. `freshctx_prepare` 1399159. That ranking is retired. Hermes winning USD by stubbing was never a FreshCtx loss.
+Slice `freshctx-horizon-v1` remains on disk. It compared five arms as rivals. Last-cycle today's harness `usd_total_micros` 16371159. `pi_compact` 1834478. `hermes_prune` 771105. `corvus_full_file` 1064415. `freshctx_prepare` 1372796. That ranking is retired. Hermes winning USD by stubbing was never a FreshCtx loss.
 
 ## Limits
 
@@ -56,8 +56,8 @@ No live LLM. No SWE pass rate. No closed Cursor claim. Estimated tokens. Frozen 
 
 Rerun with `npm run bench:layer-a`, `npm run bench:mva`, `npm run bench:econ`, `npm run bench:horizon`, and `npm run bench:addon`. Then `npm run bench:announce`. The checker rejects any integer in this file that is missing from the frozen JSON reports. Expected report digests:
 
-- `bench/results/layer-a.json` sha256:610ac6e10a1fa82aa93845abed8c0700188f573e176020b438f77c13531efbed
-- `bench/results/mva.json` sha256:ec6211e2a52bf01c696f5a2ad7758aa6a0c00b6aea74b3139b5ce7aa6988f28a
-- `bench/results/econ.json` sha256:d5fdd0573f9ed216438a3475b3beac83e57702ded02335f231a3984c34b5515c
-- `bench/results/horizon.json` sha256:e92b7df3b82fa4e33d305bcfdf3a772a8101c607ea4122e8dc0f53447fb77421
-- `bench/results/addon.json` sha256:c5e0a64d805dd374c2d1972c62de7e19e6b2b2c2982e312a3ae2bad3dc1b411f
+- `bench/results/layer-a.json` sha256:70abb1852a4c62b0d1c1882986f63caaadc2f6147f33df7c225dfd6277271596
+- `bench/results/mva.json` sha256:ec639c64e4019cc53c1ed1b7b28144ebb7306186b929046c89804a4c5d426211
+- `bench/results/econ.json` sha256:9ccdb214afe3710392cb3015aa441f04ba50454538eb1a86acf989ebe37511af
+- `bench/results/horizon.json` sha256:7aff32fb71b24086dbe004f26858b210ea647b4602b6ec45d04a6a3f9bdeb16e
+- `bench/results/addon.json` sha256:d7ff61da9dead1fc01341254e9a66c5be9190fa69fced1f6f0ebf5f4e465a314

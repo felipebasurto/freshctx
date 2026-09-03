@@ -20,11 +20,11 @@ npm run bench:announce
 
 Expected SHA-256:
 
-- `bench/results/layer-a.json` sha256:610ac6e10a1fa82aa93845abed8c0700188f573e176020b438f77c13531efbed
-- `bench/results/mva.json` sha256:ec6211e2a52bf01c696f5a2ad7758aa6a0c00b6aea74b3139b5ce7aa6988f28a
-- `bench/results/econ.json` sha256:d5fdd0573f9ed216438a3475b3beac83e57702ded02335f231a3984c34b5515c
-- `bench/results/horizon.json` sha256:e92b7df3b82fa4e33d305bcfdf3a772a8101c607ea4122e8dc0f53447fb77421
-- `bench/results/addon.json` sha256:c5e0a64d805dd374c2d1972c62de7e19e6b2b2c2982e312a3ae2bad3dc1b411f
+- `bench/results/layer-a.json` sha256:70abb1852a4c62b0d1c1882986f63caaadc2f6147f33df7c225dfd6277271596
+- `bench/results/mva.json` sha256:ec639c64e4019cc53c1ed1b7b28144ebb7306186b929046c89804a4c5d426211
+- `bench/results/econ.json` sha256:9ccdb214afe3710392cb3015aa441f04ba50454538eb1a86acf989ebe37511af
+- `bench/results/horizon.json` sha256:7aff32fb71b24086dbe004f26858b210ea647b4602b6ec45d04a6a3f9bdeb16e
+- `bench/results/addon.json` sha256:d7ff61da9dead1fc01341254e9a66c5be9190fa69fced1f6f0ebf5f4e465a314
 
 Raw stdout from extra probes goes in `bench/results/raw/`, which git ignores. Metric names are in [PROTOCOL.md](PROTOCOL.md).
 
