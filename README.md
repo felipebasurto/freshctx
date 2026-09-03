@@ -1,3 +1,5 @@
+<img width="1254" height="1254" alt="37a9a9b4-664d-4385-a863-f331067a67fc" src="https://github.com/user-attachments/assets/29eb24fd-6328-4575-8de4-ba087e0fc3a5" />
+
 # FreshCtx
 
 FreshCtx keeps code context current without knowing anything about a model,
