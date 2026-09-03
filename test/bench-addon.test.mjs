@@ -119,6 +119,10 @@ test("long session: FreshCtx stops today's leak and restores compact/prune exact
     freshMiss <= Math.ceil(corvusMiss * 1.35),
     `with-FreshCtx miss ${freshMiss} should sit in band with today+corvus ${corvusMiss}`,
   );
+  assert.ok(
+    today.with.usd_total_micros <= run.addons.corvus.usd_total_micros,
+    `today+freshctx USD ${today.with.usd_total_micros} should beat or tie today+corvus ${run.addons.corvus.usd_total_micros}`,
+  );
 });
 
 test("multi-agent: today leaks across agents, FreshCtx does not, B-only file stays out", async () => {

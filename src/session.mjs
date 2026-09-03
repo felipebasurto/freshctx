@@ -1,5 +1,5 @@
 import { FreshCtxError, fail } from "./errors.mjs";
-import { equalBytes, revisionFor, stableId } from "./hash.mjs";
+import { compactUnitId, equalBytes, revisionFor, stableId } from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
 import { VERSION } from "./protocol.mjs";
 import { parseUnits, supportedLanguages, uniqueUnitForRange } from "./treesitter.mjs";
@@ -32,15 +32,15 @@ function sameRange(left, right) {
 }
 
 function fileUnitId(sourcePath) {
-  return stableId("fc", { kind: "file", path: sourcePath });
+  return compactUnitId({ kind: "file", path: sourcePath });
 }
 
 function symbolUnitId(sourcePath, selector) {
-  return stableId("fc", { kind: "symbol", path: sourcePath, selector });
+  return compactUnitId({ kind: "symbol", path: sourcePath, selector });
 }
 
 function regionUnitId(sourcePath, startByte, endByte) {
-  return stableId("fc", { kind: "region", path: sourcePath, startByte, endByte });
+  return compactUnitId({ kind: "region", path: sourcePath, startByte, endByte });
 }
 
 function lineRangeForText(text) {
@@ -264,9 +264,9 @@ export class FreshCtxSession {
 
   async fileFallbackForSymbol(unit, snapshot, observedAt) {
     const file = resolvedFile({ sourcePath: unit.path, observedAt, snapshot, resolution: "file-fallback" });
-    await this.updateStoredUnit(file);
     const original = recordValue(this.store.state.units, unit.id);
     if (original) appendRevision(original, file.revision);
+    await this.store.putBlob(Buffer.from(file.content, "utf8"));
     return { ...file, id: unit.id };
   }
 

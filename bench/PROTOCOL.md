@@ -32,7 +32,7 @@ Reference for `bench/` v1. Definitions are frozen. A later change is a new slice
 
 `payload_bytes` is the UTF-8 byte length of selected unit `content` inside that live block. When the live block is empty, `payload_bytes` is 0.
 
-`envelope_bytes` is `live_block_bytes` minus `payload_bytes`, floored at 0. It is the wrapper around current bytes (path labels, XML tags, preambles). History markers are not in this field. They sit in `prompt_bytes`.
+`envelope_bytes` is `live_block_bytes` minus `payload_bytes`, floored at 0. It is the wrapper around current bytes (path labels, length-prefixed headers). History markers are not in this field. They sit in `prompt_bytes`.
 
 `selected_count` is the number of live units (files or projection units).
 
@@ -140,7 +140,7 @@ Current public with-versus-without slice. Same hosts, compose order, price card,
 
 Addon `prepare` uses every `result_id` still in the native request (`prepare_result_ids: "host_present"`). On today's host that is every observation; the same list is visible at prepare time because FreshCtx runs first. Do not apply `long-session.json`'s `drop_result_ids` / `active_window` 3 here. That rotating window remains the retired five-way bake-off in `freshctx-horizon-v1` / `bench/run-horizon.mjs`.
 
-Gold for with-FreshCtx is the unique paths of those host-present ids (plateau at `file_count`, 8 on this fixture). Recency still wins **selection** (newer symbol over older file; budget fill). After the selected set is frozen, **render** is `path` then `id` so a stable membership and disk produce byte-identical LIVE UTF-8. `omitted="N"` can also bust suffix identity; on this fixture unique file units are 8 and omitted stays 0. Do not shrink the projection envelope to chase USD.
+Gold for with-FreshCtx is the unique paths of those host-present ids (plateau at `file_count`, 8 on this fixture). Recency still wins **selection** (newer symbol over older file; budget fill). After the selected set is frozen, **render** is `path` then `id` so a stable membership and disk produce byte-identical LIVE UTF-8. The live frame is length-prefixed and has no selected/omitted counts, so a metadata-only header change cannot bust suffix identity.
 
 Story `a-drops-result-id` remains the explicit drop case (`activeResultIdsA`).
 
