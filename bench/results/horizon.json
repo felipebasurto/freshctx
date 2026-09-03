@@ -154,10 +154,10 @@
             "freshness_exact": true,
             "working_set_size": 5,
             "selected_paths": [
-              "f3.py",
-              "f2.py",
-              "f1.py",
               "f0.py",
+              "f1.py",
+              "f2.py",
+              "f3.py",
               "shared.py"
             ],
             "compact_calls": 0,
@@ -6086,10 +6086,10 @@
           "working_set_size": 5,
           "selected_count": 5,
           "selected_paths": [
-            "f3.py",
-            "f2.py",
-            "f1.py",
             "f0.py",
+            "f1.py",
+            "f2.py",
+            "f3.py",
             "shared.py"
           ],
           "selected_kind": "file",

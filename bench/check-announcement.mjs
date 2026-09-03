@@ -62,6 +62,7 @@ export async function checkAnnouncement({ announcementPath, layerAPath, mvaPath,
   if (!announcement.includes("freshctx-econ-v1")) problems.push("missing slice freshctx-econ-v1");
   if (!announcement.includes("freshctx-horizon-v1")) problems.push("missing slice freshctx-horizon-v1");
   if (!announcement.includes("freshctx-addon-v1")) problems.push("missing slice freshctx-addon-v1");
+  if (!announcement.includes("freshctx-addon-v2")) problems.push("missing slice freshctx-addon-v2");
   if (!announcement.includes("freshctx_then_host")) problems.push("missing compose order freshctx_then_host");
   if (announcement.includes("pass@1")) {
     problems.push("announcement must not mention pass@1");

@@ -50,6 +50,12 @@ function renderEnvelope({ selected, omitted }) {
   ].join("\n");
 }
 
+function compareRenderOrder(left, right) {
+  const byPath = left.path.localeCompare(right.path);
+  if (byPath !== 0) return byPath;
+  return left.id.localeCompare(right.id);
+}
+
 export function buildProjection(units, budgetBytes) {
   if (!Number.isSafeInteger(budgetBytes) || budgetBytes < 0) {
     throw new TypeError("budgetBytes must be a non-negative safe integer");
@@ -82,6 +88,8 @@ export function buildProjection(units, budgetBytes) {
       omitted: [...omitted, ...selected.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
     };
   }
+  selected.sort(compareRenderOrder);
+  text = renderEnvelope({ selected, omitted });
   return {
     text,
     bytes: projectionBytes(text),

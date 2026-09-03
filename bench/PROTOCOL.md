@@ -94,21 +94,25 @@ On this slice `compact_calls` counts cycles where the Pi compacted history prefi
 
 `cross_agent_stale` is true when agent A's request still contains an observed body that is not on disk because agent B changed the file. Long-session rows set the field to false: there is no second agent. Self-edits stay in `stale_leakage`.
 
-`multi-agent` is two `session_id`s, one workspace. Default CORVUS behavior is `per_agent`: each agent is one CORVUS process with its own registry `S_t`. A shared-registry dump is not in this slice. Agent B files that A never read must not appear in A's FreshCtx selected units. When A drops a `result_id`, that unit leaves the FreshCtx working set and stays in A's CORVUS registry.
+`multi-agent` is two `session_id`s, one workspace. Default CORVUS behavior is `per_agent`: each agent is one CORVUS process with its own registry `S_t`. A shared-registry dump is not in this slice. Agent B files that A never read must not appear in A's FreshCtx selected units. When A drops a `result_id`, that unit leaves the FreshCtx working set and stays in A's CORVUS registry. FreshCtx `selected_paths` follow render order (`path` then `id`). That reorders the `b-edits-a-read` FreshCtx path list versus recency; USD and miss tokens are unchanged. Do not treat that as a new horizon slice.
 
 ## Slice `freshctx-addon-v1`
 
-Paired with-versus-without on the same host. FreshCtx is an add-on a harness attaches. It does not replace Pi compact or Hermes prune. This slice reuses `bench/horizon/long-session.json` (64 cycles, 8 files, `active_window` 3, `drop_result_ids` true) and `bench/horizon/multi-agent.json` (three stories, `corvus_registry: per_agent`). Same 60s / 512MB runner budget. Same price card. Frozen host conversation turns are `host_turn_bytes` 512 per read so compact/prune still have history to rewrite after tool bodies become markers.
+Retired rotating-window pair slice. It reused `bench/horizon/long-session.json` including `drop_result_ids` / `active_window` 3, so FreshCtx `prepare` saw only the last three `result_id`s. Numbers stay in git history. The public with-versus-without claim moved to `freshctx-addon-v2`. Compose order `freshctx_then_host` did not change.
+
+Paired with-versus-without on the same host. FreshCtx is an add-on a harness attaches. It does not replace Pi compact or Hermes prune. Frozen host conversation turns are `host_turn_bytes` 512 per read so compact/prune still have history to rewrite after tool bodies become markers.
 
 ### Compose order `freshctx_then_host`
 
-Frozen. Do not invert it in this slice.
+Frozen. Do not invert it in this slice or in `freshctx-addon-v2`.
 
 1. The host builds a native request: conversation turns plus tool-read bodies.
 2. FreshCtx `observe` during reads, then `prepare`/`apply` on a copy. Still-present `result_id`s become markers. The live projection is attached. Compact and prune have not run yet.
 3. The host engine may still compact or prune **history** (turns, stubs, markers). The live block is unchanged.
 
 If a combined arm disables prune or compact, the row is invalid. Markers are tiny, so prune mostly eats old conversation; freshness is the live projection for still-active `result_id`s. If the host also dropped a `result_id`, FreshCtx omits it.
+
+Pi compact may drop ids from **history** after prepare. The next cycle still prepares from native `result_id`s still in the request because compose order is FreshCtx first. Do not invert to prune-first.
 
 ### Pairs
 
@@ -127,6 +131,24 @@ Optional add-on pair on today's host: `today+corvus` vs `today+freshctx`. CORVUS
 Say better only on metrics the JSON wins **inside a pair**. `stopped_stale_leakage` is true when without leaked and with did not. `restored_freshness_exact` is true when with is exact and without is not. Never rank FreshCtx against prune as rival methods. Slice `freshctx-horizon-v1` remains on disk as the earlier five-way bake-off; do not treat those USD totals as the public with-versus-without claim.
 
 Layer A stays a model-free leak test: freshness transformer vs append-only vs CORVUS.
+
+## Slice `freshctx-addon-v2`
+
+Current public with-versus-without slice. Same hosts, compose order, price card, 60s / 512MB budget, `host_turn_bytes` 512, and multi-agent stories as v1. Writes `bench/results/addon.json`. Does not overwrite `bench/results/horizon.json`.
+
+### Host-present `result_id`s
+
+Addon `prepare` uses every `result_id` still in the native request (`prepare_result_ids: "host_present"`). On today's host that is every observation; the same list is visible at prepare time because FreshCtx runs first. Do not apply `long-session.json`'s `drop_result_ids` / `active_window` 3 here. That rotating window remains the retired five-way bake-off in `freshctx-horizon-v1` / `bench/run-horizon.mjs`.
+
+Gold for with-FreshCtx is the unique paths of those host-present ids (plateau at `file_count`, 8 on this fixture). Recency still wins **selection** (newer symbol over older file; budget fill). After the selected set is frozen, **render** is `path` then `id` so a stable membership and disk produce byte-identical LIVE UTF-8. `omitted="N"` can also bust suffix identity; on this fixture unique file units are 8 and omitted stays 0. Do not shrink the projection envelope to chase USD.
+
+Story `a-drops-result-id` remains the explicit drop case (`activeResultIdsA`).
+
+If the suffix is byte-identical to the previous cycle, suffix tokens are cache hits. A rotating trio or recency-shuffled XML misses the whole suffix at the uncached input price.
+
+### What “better” means
+
+Unchanged from v1. Say better only inside a pair. Do not assert FreshCtx is cheaper than Hermes prune unless the frozen JSON is; prune stubs can still win USD. The miss-tax claim is that with-FreshCtx `cache_miss_tokens` sit in band with `today+corvus`, not at the rotating-window v1 hole.
 
 ## Labels
 

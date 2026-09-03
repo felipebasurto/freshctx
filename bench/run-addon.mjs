@@ -17,6 +17,9 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const reportPath = path.join(rootDir, "results", "addon.json");
 const rawDir = path.join(rootDir, "results", "raw");
 
+export const ADDON_SLICE = "freshctx-addon-v2";
+export const PREPARE_RESULT_IDS = "host_present";
+
 const BUDGET_MS = 60_000;
 const BUDGET_RSS_BYTES = 512 * 1024 * 1024;
 
@@ -193,8 +196,12 @@ export async function runAddonLongSession(spec, priceCard) {
         onRead: freshctx.observe,
       });
       distinctPaths.add(filePath);
-      const active = observations.slice(-spec.active_window).map((obs) => obs.resultId);
-      fixture.activeResultIds = spec.drop_result_ids ? active : observations.map((obs) => obs.resultId);
+      // Host-present result_ids: every observation still in the native request.
+      // FreshCtx runs first (compose order freshctx_then_host), so prepare sees
+      // this list. Do not apply long-session.json drop_result_ids / active_window;
+      // that slice stays the retired five-way bake-off in run-horizon.mjs.
+      const hostPresentIds = observations.map((obs) => obs.resultId);
+      fixture.activeResultIds = hostPresentIds;
       snapshotN += 1;
       const snapshot = await freshctx.snapshot(`addon-long-${snapshotN}`);
       const corvusView = await transformCorvus({ root: tmp, observations });
@@ -203,7 +210,11 @@ export async function runAddonLongSession(spec, priceCard) {
       const goldHost = goldFromDisk(disk, [...distinctPaths]);
       const goldFresh = goldFromDisk(
         disk,
-        [...new Set(observations.slice(-spec.active_window).map((obs) => obs.path))],
+        [...new Set(
+          observations
+            .filter((obs) => hostPresentIds.includes(obs.resultId))
+            .map((obs) => obs.path),
+        )],
       );
       const goldCorvus = goldHost;
 
@@ -294,9 +305,10 @@ export async function runAddonLongSession(spec, priceCard) {
     const freshLast = lastRowFields(byHost.today_tool_history.with.byCycle.at(-1));
     return {
       schema: 1,
-      slice: "freshctx-addon-v1",
+      slice: ADDON_SLICE,
       story: "long-session",
       compose_order: COMPOSE_ORDER,
+      prepare_result_ids: PREPARE_RESULT_IDS,
       fixtureId: spec.id,
       cycle_count: spec.cycle_count,
       file_count: spec.file_count,
@@ -467,9 +479,10 @@ export async function runAddonMultiAgentStory(bundle, story, priceCard) {
     const freshctx = pairs.find((row) => row.host === "today_tool_history").with;
     return {
       schema: 1,
-      slice: "freshctx-addon-v1",
+      slice: ADDON_SLICE,
       story: story.id,
       compose_order: COMPOSE_ORDER,
+      prepare_result_ids: PREPARE_RESULT_IDS,
       fixtureId: story.id,
       pairs,
       addons: {
@@ -559,10 +572,10 @@ function enforceBudget(startedNs) {
   const elapsedMs = Number(process.hrtime.bigint() - startedNs) / 1e6;
   const rss = process.memoryUsage().rss;
   if (elapsedMs > BUDGET_MS) {
-    throw new Error(`freshctx-addon-v1 exceeded ${BUDGET_MS}ms (${Math.round(elapsedMs)}ms)`);
+    throw new Error(`${ADDON_SLICE} exceeded ${BUDGET_MS}ms (${Math.round(elapsedMs)}ms)`);
   }
   if (rss > BUDGET_RSS_BYTES) {
-    throw new Error(`freshctx-addon-v1 exceeded 512MB RSS (${rss} bytes)`);
+    throw new Error(`${ADDON_SLICE} exceeded 512MB RSS (${rss} bytes)`);
   }
   return { elapsed_ms: Math.round(elapsedMs), rss_bytes: rss };
 }
@@ -580,8 +593,9 @@ export async function runAddon() {
   const budget = enforceBudget(startedNs);
   const report = {
     schema: 1,
-    slice: "freshctx-addon-v1",
+    slice: ADDON_SLICE,
     compose_order: COMPOSE_ORDER,
+    prepare_result_ids: PREPARE_RESULT_IDS,
     cycle_count: spec.cycle_count,
     file_count: spec.file_count,
     price_card: priceCard.id,
@@ -597,6 +611,7 @@ export async function runAddon() {
       file_count: spec.file_count,
       active_window: spec.active_window,
       drop_result_ids: spec.drop_result_ids,
+      prepare_result_ids: PREPARE_RESULT_IDS,
       pairs: longRun.pairs.map((pair) => ({
         host: pair.host,
         without: pair.without,
@@ -625,6 +640,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     reportPath: out,
     slice: report.slice,
     compose_order: report.compose_order,
+    prepare_result_ids: report.prepare_result_ids,
     summary: report.summary,
     budget,
   };
