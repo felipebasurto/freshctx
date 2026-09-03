@@ -21,11 +21,13 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "check": "node --check bin/freshctx.mjs && node --check src/cli.mjs && node --check src/client.mjs && node --check src/errors.mjs && node --check src/hash.mjs && node --check src/jsonl.mjs && node --check src/projection.mjs && node --check src/protocol.mjs && node --check src/selection.mjs && node --check src/server.mjs && node --check src/session.mjs && node --check src/store.mjs && node --check src/treesitter.mjs && node --check src/workspace.mjs && node --check bench/run-layer-a.mjs && node --check bench/run-mva.mjs && node --check bench/check-announcement.mjs && node --check bench/score.mjs && node --check bench/lib/engine.mjs && node --check bench/lib/replay.mjs && node --check bench/lib/serialize.mjs && node --check bench/transformers/append-only.mjs && node --check bench/transformers/corvus.mjs && node --check bench/transformers/freshctx.mjs && node --check bench/mva/policy.mjs",
+    "check": "node --check bin/freshctx.mjs && node --check src/cli.mjs && node --check src/client.mjs && node --check src/errors.mjs && node --check src/hash.mjs && node --check src/jsonl.mjs && node --check src/projection.mjs && node --check src/protocol.mjs && node --check src/selection.mjs && node --check src/server.mjs && node --check src/session.mjs && node --check src/store.mjs && node --check src/treesitter.mjs && node --check src/workspace.mjs && node --check bench/run-layer-a.mjs && node --check bench/run-mva.mjs && node --check bench/run-econ.mjs && node --check bench/run-horizon.mjs && node --check bench/check-announcement.mjs && node --check bench/score.mjs && node --check bench/ledger/cache.mjs && node --check bench/lib/engine.mjs && node --check bench/lib/replay.mjs && node --check bench/lib/serialize.mjs && node --check bench/transformers/append-only.mjs && node --check bench/transformers/corvus.mjs && node --check bench/transformers/freshctx.mjs && node --check bench/transformers/pi-compact.mjs && node --check bench/transformers/hermes-prune.mjs && node --check bench/mva/policy.mjs",
     "test": "node --test test/*.test.mjs",
     "pack:check": "node test/package-contents.mjs",
     "bench:layer-a": "node bench/run-layer-a.mjs",
     "bench:mva": "node bench/run-mva.mjs",
+    "bench:econ": "node bench/run-econ.mjs",
+    "bench:horizon": "node bench/run-horizon.mjs",
     "bench:announce": "node bench/check-announcement.mjs"
   },
   "keywords": [

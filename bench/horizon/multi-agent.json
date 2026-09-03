@@ -1,0 +1,56 @@
+{
+  "id": "multi-agent",
+  "kind": "multi-agent",
+  "corvus_registry": "per_agent",
+  "budgetBytes": 65536,
+  "padBytes": 8192,
+  "stories": [
+    {
+      "id": "b-edits-a-read",
+      "files": {
+        "shared.py": "def shared():\n    return 'A0'\n",
+        "f0.py": "def f0():\n    return 0\n",
+        "f1.py": "def f1():\n    return 1\n",
+        "f2.py": "def f2():\n    return 2\n",
+        "f3.py": "def f3():\n    return 3\n"
+      },
+      "agentA": [
+        { "op": "read", "path": "shared.py", "resultId": "a-shared" },
+        { "op": "read", "path": "f0.py", "resultId": "a-f0" },
+        { "op": "read", "path": "f1.py", "resultId": "a-f1" },
+        { "op": "read", "path": "f2.py", "resultId": "a-f2" },
+        { "op": "read", "path": "f3.py", "resultId": "a-f3" }
+      ],
+      "agentB": [
+        { "op": "edit", "path": "shared.py", "content": "def shared():\n    return 'B1'\n" }
+      ]
+    },
+    {
+      "id": "b-only-file",
+      "files": {
+        "a.py": "def alpha():\n    return 'A'\n",
+        "b.py": "def beta():\n    return 'B'\n"
+      },
+      "agentA": [
+        { "op": "read", "path": "a.py", "resultId": "a-only" }
+      ],
+      "agentB": [
+        { "op": "edit", "path": "b.py", "content": "def beta():\n    return 'B-created'\n" },
+        { "op": "read", "path": "b.py", "resultId": "b-only" }
+      ]
+    },
+    {
+      "id": "a-drops-result-id",
+      "files": {
+        "keep.py": "def keep():\n    return 'keep'\n",
+        "drop.py": "def drop():\n    return 'drop'\n"
+      },
+      "agentA": [
+        { "op": "read", "path": "drop.py", "resultId": "a-drop" },
+        { "op": "read", "path": "keep.py", "resultId": "a-keep" }
+      ],
+      "agentB": [],
+      "activeResultIdsA": ["a-keep"]
+    }
+  ]
+}

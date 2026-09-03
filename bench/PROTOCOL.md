@@ -56,6 +56,46 @@ Names follow Zheng et al. §6.2, measured on slice `freshctx-mva-v1` only.
 
 `working_set_size` is registered files (`corvus_full_file`) or selected units (`freshctx_prepare`) after the last cycle. `append_only` uses the number of historical read bodies still in the request.
 
+## Slice `freshctx-econ-v1`
+
+Estimated tokens, prompt-cache hits, API calls, tool calls, and USD from a frozen price card. Files are tens of kilobytes so the projection envelope can amortize. This slice is not a live Pi or Hermes CLI run.
+
+## Econ arms
+
+`today_tool_history` is `append_only` under a public name. Tool-read bodies stay in history. This is Pi and Hermes (and Cursor, Claude Code, Codex) before compact or prune fires.
+
+`pi_compact` reimplements the Pi keep-recent cut as a context transformer. Pinned SHA `1d9787c11fb91ecf7c892050f4c0607a995dd15b` of `earendil-works/pi`, mapping `packages/coding-agent/docs/compaction.md`. `keepRecentTokens` is frozen at 4096 estimated tokens. The dropped prefix becomes one stub string. `compact_calls` is 1 after the cut. There is no live summarizer.
+
+`hermes_prune` reimplements Hermes prune-first tool-result elision. Pinned SHA `63279301bcbdc185c1b07b98a9312eb0c862f26d` of `NousResearch/hermes-agent`, mapping `agent/context_compressor.py` `_prune_old_tool_results`. `proactive_prune_tokens` is frozen at 4096. `protect_last_n` is 1. Old bodies become one-line stubs. `prune_commits` counts a rewrite. Prune is not an API call.
+
+`corvus_full_file` and `freshctx_prepare` are unchanged.
+
+## Cache model
+
+Serialized requests split on the `LIVE` marker in `bench/lib/serialize.mjs`. Bytes before that marker are the prefix (`HISTORY`). Bytes after it are the suffix (`LIVE`).
+
+`est_tokens` is `ceil(utf8_bytes / bytes_per_token)` with `bytes_per_token` from `bench/ledger/price-card-v1.json`.
+
+If the prefix is byte-identical to the previous cycle, prefix tokens are `cache_hit_tokens`. Otherwise they are `cache_write_tokens` (a new Anthropic 5-minute cache write). Compact and prune rewrite history, so they miss the prefix.
+
+If the suffix is byte-identical to the previous cycle, suffix tokens are cache hits. Otherwise they are `cache_miss_tokens` billed at the uncached input price.
+
+USD is estimated. `usd_input_micros` is integer millionths of a United States dollar from the price card. `usd_input` is that value divided by 1,000,000. `usd_output_micros` bills `output_stub_tokens_per_api_call` per `api_calls` plus `output_stub_tokens_per_compact_call` per `compact_calls`. `usd_total_micros` is `usd_input_micros` plus `usd_output_micros`.
+
+`api_calls` is policy `cycles` plus `compact_calls`. `tool_calls` is every `read`, including duplicates.
+
+## Slice `freshctx-horizon-v1`
+
+Long sessions and two agents on the same five econ arms and price card. Not a live Pi or Hermes CLI. Not a drop-in adapter.
+
+`long-session` is one scripted agent, `cycle_count` cycles (frozen in `bench/horizon/long-session.json`), at least 8 files. Each cycle reads one path. Every `stale_every` cycles the next read is preceded by a disk edit of that path. FreshCtx `prepare` uses only the last `active_window` `result_id`s (`drop_result_ids`). CORVUS keeps every registered path. The report stores a `by_cycle` array per arm with `working_set_size`, `usd_total_micros`, `cache_miss_tokens`, `stale_leakage`, `freshness_exact`, and `api_calls`.
+
+On this slice `compact_calls` counts cycles where the Pi compacted history prefix changed. `prune_commits` counts cycles where the Hermes pruned history prefix changed. That is how compact and prune fire more than once on a long run. The transformer flag remains 0 or 1 per snapshot.
+
+`cross_agent_stale` is true when agent A's request still contains an observed body that is not on disk because agent B changed the file. Long-session rows set the field to false: there is no second agent. Self-edits stay in `stale_leakage`.
+
+`multi-agent` is two `session_id`s, one workspace. Default CORVUS behavior is `per_agent`: each agent is one CORVUS process with its own registry `S_t`. A shared-registry dump is not in this slice. Agent B files that A never read must not appear in A's FreshCtx selected units. When A drops a `result_id`, that unit leaves the FreshCtx working set and stays in A's CORVUS registry.
+
 ## Labels
 
-Numbers produced by this repo are `measured`. Numbers copied from arXiv:2607.22711v1 are `cited`. This suite does not mark any score `reproduced` against their Bedrock runs.
+Numbers produced by this repo are `measured`. Numbers copied from arXiv:2607.22711v1 or from a dated vendor price page are `cited`. This suite does not mark any score `reproduced` against Bedrock, Pi, or Hermes CLI runs.

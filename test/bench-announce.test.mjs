@@ -12,12 +12,12 @@ test("announcement integers come from the frozen reports", async () => {
   assert.ok(result.words <= 1200);
 });
 
-test("a hand-bumped percentage fails the announcement checker", async () => {
+test("a hand-bumped horizon USD fails the announcement checker", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "freshctx-announce-"));
   const source = await readFile(new URL("../bench/ANNOUNCEMENT.md", import.meta.url), "utf8");
   const mutatedPath = path.join(tmp, "ANNOUNCEMENT.md");
-  await writeFile(mutatedPath, source.replace("3079", "3080"));
+  await writeFile(mutatedPath, source.replace("16371159", "16371160"));
   const result = await checkAnnouncement({ announcementPath: mutatedPath });
   assert.equal(result.ok, false);
-  assert.ok(result.problems.some((problem) => problem.includes("3080")));
+  assert.ok(result.problems.some((problem) => problem.includes("16371160")));
 });

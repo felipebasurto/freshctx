@@ -1,0 +1,10 @@
+{
+  "id": "large-file-budget",
+  "kind": "partial-read",
+  "budgetBytes": 400,
+  "padBytes": 20000,
+  "path": "big.py",
+  "files": {
+    "big.py": "def top():\n    return 1\n"
+  }
+}

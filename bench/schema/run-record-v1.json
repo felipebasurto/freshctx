@@ -7,7 +7,16 @@
   "properties": {
     "schema": { "const": 1 },
     "slice": { "type": "string", "minLength": 1 },
-    "arm": { "enum": ["append_only", "corvus_full_file", "freshctx_prepare"] },
+    "arm": {
+      "enum": [
+        "append_only",
+        "today_tool_history",
+        "pi_compact",
+        "hermes_prune",
+        "corvus_full_file",
+        "freshctx_prepare"
+      ]
+    },
     "fixtureId": { "type": "string", "minLength": 1 },
     "scores": {
       "type": "object",
@@ -35,7 +44,19 @@
         "cycles": { "type": "integer", "minimum": 0 },
         "final_request_bytes": { "type": "integer", "minimum": 0 },
         "accumulated_request_bytes": { "type": "integer", "minimum": 0 },
-        "working_set_size": { "type": "integer", "minimum": 0 }
+        "working_set_size": { "type": "integer", "minimum": 0 },
+        "est_tokens": { "type": "integer", "minimum": 0 },
+        "cache_hit_tokens": { "type": "integer", "minimum": 0 },
+        "cache_miss_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "type": "integer", "minimum": 0 },
+        "usd_input_micros": { "type": "integer", "minimum": 0 },
+        "usd_output_micros": { "type": "integer", "minimum": 0 },
+        "usd_total_micros": { "type": "integer", "minimum": 0 },
+        "usd_input": { "type": "number", "minimum": 0 },
+        "api_calls": { "type": "integer", "minimum": 0 },
+        "tool_calls": { "type": "integer", "minimum": 0 },
+        "compact_calls": { "type": "integer", "minimum": 0 },
+        "prune_commits": { "type": "integer", "minimum": 0 }
       }
     }
   }

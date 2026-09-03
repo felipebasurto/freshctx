@@ -8,9 +8,11 @@ JSONL protocol over stdio. A harness-specific bridge owns its native request
 format; FreshCtx owns safe workspace resolution, Tree-sitter symbol identity,
 exact revision storage, selection, and projection.
 
-Measured context-transformer scores against append-only history and a
-CORVUS-style whole-file dump live in [bench/ANNOUNCEMENT.md](bench/ANNOUNCEMENT.md).
-This package is still a prototype. Those figures are not a SWE pass rate.
+Measured context-transformer scores against today's append-only tool history,
+a Pi compact clone, a Hermes prune clone, and a CORVUS-style whole-file dump
+live in [bench/ANNOUNCEMENT.md](bench/ANNOUNCEMENT.md), including a 64-cycle
+session and two agents on one disk. This package is still a prototype. Those
+figures are not a SWE pass rate. There is no drop-in adapter.
 
 ## Install and initialize
 

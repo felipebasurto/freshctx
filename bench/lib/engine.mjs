@@ -6,11 +6,20 @@ import { currentFiles, materialize, replayEvents, resolveGold } from "./replay.m
 import { checkExpect, score } from "../score.mjs";
 import { transformAppendOnly } from "../transformers/append-only.mjs";
 import { transformCorvus } from "../transformers/corvus.mjs";
+import { transformHermesPrune } from "../transformers/hermes-prune.mjs";
+import { transformPiCompact } from "../transformers/pi-compact.mjs";
 import { openFreshctxArm } from "../transformers/freshctx.mjs";
 
-const ARMS = ["append_only", "corvus_full_file", "freshctx_prepare"];
+const LAYER_A_ARMS = ["append_only", "corvus_full_file", "freshctx_prepare"];
+export const ECON_ARMS = [
+  "today_tool_history",
+  "pi_compact",
+  "hermes_prune",
+  "corvus_full_file",
+  "freshctx_prepare",
+];
 
-export async function runFixture(fixture, { keepRoot = false } = {}) {
+export async function runFixture(fixture, { keepRoot = false, arms = LAYER_A_ARMS } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), `freshctx-bench-${fixture.id}-`));
   let finished = false;
   try {
@@ -22,12 +31,15 @@ export async function runFixture(fixture, { keepRoot = false } = {}) {
       const disk = await currentFiles(root, [...new Set(observations.map((obs) => obs.path))]);
       const views = {
         append_only: transformAppendOnly({ observations }),
+        today_tool_history: transformAppendOnly({ observations, arm: "today_tool_history" }),
+        pi_compact: transformPiCompact({ observations }),
+        hermes_prune: transformHermesPrune({ observations }),
         corvus_full_file: await transformCorvus({ root, observations }),
         freshctx_prepare: await freshctx.finish(),
       };
       finished = true;
       const runs = [];
-      for (const arm of ARMS) {
+      for (const arm of arms) {
         const view = views[arm];
         const scores = score(view, { observations, gold, budgetBytes: fixture.budgetBytes, disk });
         const expect = fixture.expect?.[arm] ?? {};
