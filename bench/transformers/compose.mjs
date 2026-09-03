@@ -2,7 +2,7 @@ import { estTokens } from "../ledger/cache.mjs";
 import { HERMES_PROTECT_LAST_N, HERMES_PRUNE_TOKENS } from "./hermes-prune.mjs";
 import { PI_KEEP_RECENT_TOKENS } from "./pi-compact.mjs";
 
-// Frozen compose order for slice freshctx-addon-v1:
+// Frozen compose order for addon slices (freshctx-addon-v1, freshctx-addon-v2):
 // 1. Host builds native history (conversation turns + tool-read bodies).
 // 2. FreshCtx prepare/apply rewrites still-present tool results to markers
 //    and attaches the live projection. Host compact/prune have not run yet.

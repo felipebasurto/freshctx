@@ -61,6 +61,50 @@ test("newer active symbols win over an older active file and overlapping bytes a
   assert.equal(plan.omitted[0].reason, "overlap");
 });
 
+test("projection xml is byte-identical when membership and disk stay the same and only recency changes", async (t) => {
+  const files = {
+    "src/a.py": "def a():\n    return 1\n",
+    "src/m.py": "def m():\n    return 2\n",
+    "src/z.py": "def z():\n    return 3\n",
+  };
+  const root = await workspaceFor(t, files);
+  const session = await sessionFor(t, root);
+  let turn = 0;
+  for (const [filePath, body] of Object.entries(files)) {
+    turn += 1;
+    await session.observe({
+      resultId: `first-${filePath}`,
+      path: filePath,
+      content: content(body),
+      range: null,
+      turn,
+    });
+  }
+  const firstIds = Object.keys(files).map((filePath) => `first-${filePath}`);
+  const first = decodedProjection(
+    await session.prepare({ requestId: "stable-1", resultIds: firstIds, budgetBytes: 16_384 }),
+  );
+  for (const filePath of [...Object.keys(files)].reverse()) {
+    turn += 1;
+    await session.observe({
+      resultId: `second-${filePath}`,
+      path: filePath,
+      content: content(files[filePath]),
+      range: null,
+      turn,
+    });
+  }
+  const secondIds = [...Object.keys(files)].reverse().map((filePath) => `second-${filePath}`);
+  const second = decodedProjection(
+    await session.prepare({ requestId: "stable-2", resultIds: secondIds, budgetBytes: 16_384 }),
+  );
+  assert.equal(second, first);
+  assert.deepEqual(
+    decodeProjectionUnits(first).map((unit) => unit.path),
+    Object.keys(files).sort((left, right) => left.localeCompare(right)),
+  );
+});
+
 test("a stale plan is rejected and commit is otherwise idempotent", async (t) => {
   const source = "def top():\n    return 1\n";
   const root = await workspaceFor(t, { "a.py": source });

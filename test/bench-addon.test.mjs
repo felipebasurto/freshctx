@@ -13,7 +13,13 @@ import {
   HOST_TURN_BYTES,
 } from "../bench/transformers/compose.mjs";
 import { loadLongSession, loadMultiAgent } from "../bench/run-horizon.mjs";
-import { runAddon, runAddonLongSession, runAddonMultiAgentStory } from "../bench/run-addon.mjs";
+import {
+  ADDON_SLICE,
+  PREPARE_RESULT_IDS,
+  runAddon,
+  runAddonLongSession,
+  runAddonMultiAgentStory,
+} from "../bench/run-addon.mjs";
 
 function bulkyObservations(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -67,10 +73,12 @@ test("long session: FreshCtx stops today's leak and restores compact/prune exact
   const priceCard = await loadPriceCard();
   const spec = await loadLongSession();
   const run = await runAddonLongSession(spec, priceCard);
-  assert.equal(run.slice, "freshctx-addon-v1");
+  assert.equal(run.slice, ADDON_SLICE);
+  assert.equal(run.slice, "freshctx-addon-v2");
   assert.equal(run.compose_order, "freshctx_then_host");
+  assert.equal(run.prepare_result_ids, PREPARE_RESULT_IDS);
   assert.equal(spec.cycle_count, 64);
-  assert.ok(spec.drop_result_ids);
+  assert.ok(spec.drop_result_ids, "horizon fixture still drops ids; addon runner must not");
   for (const host of ADDON_HOSTS) {
     const pair = run.pairs.find((row) => row.host === host);
     assert.ok(pair, `missing pair for ${host}`);
@@ -82,11 +90,18 @@ test("long session: FreshCtx stops today's leak and restores compact/prune exact
     if (pair.without.freshness_exact === false) {
       assert.equal(pair.with.freshness_exact, true, `${host}+freshctx should restore freshness_exact`);
     }
+    assert.equal(pair.with.working_set_size, spec.file_count, `${host}+freshctx working set plateaus at file_count`);
+    const plateau = pair.with_by_cycle.slice(spec.file_count - 1);
+    assert.ok(
+      plateau.every((row) => row.working_set_size === spec.file_count),
+      `${host}+freshctx working set should stay at ${spec.file_count} after all files are seen`,
+    );
   }
   const today = run.pairs.find((row) => row.host === "today_tool_history");
   assert.equal(today.without.stale_leakage, true);
   assert.equal(today.with.stale_leakage, false);
   assert.equal(today.delta.stopped_stale_leakage, true);
+  assert.equal(today.with.freshness_exact, true);
   const pi = run.pairs.find((row) => row.host === "pi_compact");
   const hermes = run.pairs.find((row) => row.host === "hermes_prune");
   assert.equal(pi.without.freshness_exact, false);
@@ -97,6 +112,13 @@ test("long session: FreshCtx stops today's leak and restores compact/prune exact
   assert.ok(hermes.with.prune_commits >= 2, "hermes_prune+freshctx must still prune");
   assert.equal(run.addons.corvus.freshness_exact, true);
   assert.equal(run.addons.freshctx.freshness_exact, true);
+  const corvusMiss = run.addons.corvus.cache_miss_tokens;
+  const freshMiss = today.with.cache_miss_tokens;
+  assert.ok(freshMiss < 398928, `with-FreshCtx miss ${freshMiss} must drop vs rotating-window 398928`);
+  assert.ok(
+    freshMiss <= Math.ceil(corvusMiss * 1.35),
+    `with-FreshCtx miss ${freshMiss} should sit in band with today+corvus ${corvusMiss}`,
+  );
 });
 
 test("multi-agent: today leaks across agents, FreshCtx does not, B-only file stays out", async () => {
@@ -134,7 +156,8 @@ test("addon report is deterministic across two runs", { timeout: 180000 }, async
   const first = await runAddon();
   const second = await runAddon();
   assert.equal(JSON.stringify(first.report), JSON.stringify(second.report));
-  assert.equal(first.report.slice, "freshctx-addon-v1");
+  assert.equal(first.report.slice, "freshctx-addon-v2");
+  assert.equal(first.report.prepare_result_ids, "host_present");
   assert.equal(first.report.compose_order, "freshctx_then_host");
 });
 
