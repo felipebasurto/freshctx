@@ -19,4 +19,5 @@ jobs:
       - run: npm run bench:mva
       - run: npm run bench:econ
       - run: npm run bench:horizon
+      - run: npm run bench:addon
       - run: npm run bench:announce

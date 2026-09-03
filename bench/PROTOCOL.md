@@ -96,6 +96,38 @@ On this slice `compact_calls` counts cycles where the Pi compacted history prefi
 
 `multi-agent` is two `session_id`s, one workspace. Default CORVUS behavior is `per_agent`: each agent is one CORVUS process with its own registry `S_t`. A shared-registry dump is not in this slice. Agent B files that A never read must not appear in A's FreshCtx selected units. When A drops a `result_id`, that unit leaves the FreshCtx working set and stays in A's CORVUS registry.
 
+## Slice `freshctx-addon-v1`
+
+Paired with-versus-without on the same host. FreshCtx is an add-on a harness attaches. It does not replace Pi compact or Hermes prune. This slice reuses `bench/horizon/long-session.json` (64 cycles, 8 files, `active_window` 3, `drop_result_ids` true) and `bench/horizon/multi-agent.json` (three stories, `corvus_registry: per_agent`). Same 60s / 512MB runner budget. Same price card. Frozen host conversation turns are `host_turn_bytes` 512 per read so compact/prune still have history to rewrite after tool bodies become markers.
+
+### Compose order `freshctx_then_host`
+
+Frozen. Do not invert it in this slice.
+
+1. The host builds a native request: conversation turns plus tool-read bodies.
+2. FreshCtx `observe` during reads, then `prepare`/`apply` on a copy. Still-present `result_id`s become markers. The live projection is attached. Compact and prune have not run yet.
+3. The host engine may still compact or prune **history** (turns, stubs, markers). The live block is unchanged.
+
+If a combined arm disables prune or compact, the row is invalid. Markers are tiny, so prune mostly eats old conversation; freshness is the live projection for still-active `result_id`s. If the host also dropped a `result_id`, FreshCtx omits it.
+
+### Pairs
+
+Each report row is one host:
+
+- `today_tool_history` vs `today_tool_history+freshctx`
+- `pi_compact` vs `pi_compact+freshctx`
+- `hermes_prune` vs `hermes_prune+freshctx`
+
+`compact_calls` and `prune_commits` must still increment on the with-FreshCtx long-session arm (`>= 2` on 64 cycles). USD is with versus without on that host. Hermes winning USD by stubbing is not a FreshCtx loss.
+
+Optional add-on pair on today's host: `today+corvus` vs `today+freshctx`. CORVUS is a competing add-on, not a compact clone. Do not score CORVUS against prune.
+
+### What “better” means
+
+Say better only on metrics the JSON wins **inside a pair**. `stopped_stale_leakage` is true when without leaked and with did not. `restored_freshness_exact` is true when with is exact and without is not. Never rank FreshCtx against prune as rival methods. Slice `freshctx-horizon-v1` remains on disk as the earlier five-way bake-off; do not treat those USD totals as the public with-versus-without claim.
+
+Layer A stays a model-free leak test: freshness transformer vs append-only vs CORVUS.
+
 ## Labels
 
 Numbers produced by this repo are `measured`. Numbers copied from arXiv:2607.22711v1 or from a dated vendor price page are `cited`. This suite does not mark any score `reproduced` against Bedrock, Pi, or Hermes CLI runs.
