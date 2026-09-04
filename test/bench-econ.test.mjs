@@ -36,7 +36,13 @@ test("econ report is deterministic and includes usd_input for every arm", async 
   const disk = await readFile(first.reportPath, "utf8");
   assert.equal(disk, `${JSON.stringify(first.report, null, 2)}\n`);
   assert.equal(first.report.task_count, 8);
+  const freshUsd = first.report.summary.arms.freshctx_prepare.usd_total_micros;
   for (const arm of ECON_ARMS) {
     assert.equal(typeof first.report.summary.arms[arm].usd_input_micros, "number");
+    if (arm === "freshctx_prepare") continue;
+    assert.ok(
+      freshUsd < first.report.summary.arms[arm].usd_total_micros,
+      `econ FreshCtx USD ${freshUsd} is not lowest vs ${arm} ${first.report.summary.arms[arm].usd_total_micros}`
+    );
   }
 });

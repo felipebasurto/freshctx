@@ -38,7 +38,7 @@ Story `a-drops-result-id`. Without FreshCtx, today's harness keeps `working_set_
 
 ## Layer A stays a leak test
 
-12 Layer A fixtures. No LLM. `append_only` left a stale read body in 8 fixtures. `freshness_exact` held in 2. `corvus_full_file` had `stale_leakage` 0 and `freshness_exact` 12, with `budget_ok` 11. `freshctx_prepare` had `stale_leakage` 0 and `freshness_exact` 11. The miss is budget 0, where the projection is 0 bytes by design. `prompt_bytes` summed to 819, 1048, and 1013. `envelope_bytes` were 0, 88, and 108. The wrapper is a measured cost.
+12 Layer A fixtures. No LLM. `append_only` left a stale read body in 8 fixtures. `freshness_exact` held in 2. `corvus_full_file` had `stale_leakage` 0 and `freshness_exact` 12, with `budget_ok` 11. `freshctx_prepare` had `stale_leakage` 0 and `freshness_exact` 11. The miss is budget 0, where the projection is 0 bytes by design. FreshCtx wins the budget and prompt pair (`budget_ok` 12 vs 11, `prompt_bytes` 1013 vs 1048). CORVUS wins unconstrained exactness on the 0-byte fixture. `prompt_bytes` summed to 819, 1048, and 1013. `envelope_bytes` were 0, 88, and 108. The wrapper is a measured cost.
 
 Scripted MVA `freshctx-mva-v1` used 22 `cycles` on today's harness and 14 on CORVUS and FreshCtx, with 4 `duplicate_file_reads` only on today.
 
@@ -48,7 +48,7 @@ Short tasks `freshctx-econ-v1` still exist as measured USD on the same engines. 
 
 Slice `freshctx-addon-v1` remains the rotating-window pair (`drop_result_ids`, last 3 ids). Its LIVE suffix changed every cycle. That slice is retired the same way as the five-way bake-off. Current addon.json is `freshctx-addon-v2`.
 
-Slice `freshctx-horizon-v1` remains on disk. It compared five arms as rivals. Last-cycle today's harness `usd_total_micros` 16371159. `pi_compact` 1834478. `hermes_prune` 771105. `corvus_full_file` 1064415. `freshctx_prepare` 1372796. That ranking is retired. Hermes winning USD by stubbing was never a FreshCtx loss.
+Slice `freshctx-horizon-v1` remains on disk. It compared five arms as rivals. Last-cycle today's harness `usd_total_micros` 16371159. `pi_compact` 1834478. `hermes_prune` 771105. `corvus_full_file` 1064415. `freshctx_prepare` 1372796. That ranking is retired. 1372796 vs CORVUS 1064415 is not a public rivalry. Do not chase it. Hermes winning USD by stubbing was never a FreshCtx loss.
 
 ## Limits
 

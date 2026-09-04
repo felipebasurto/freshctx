@@ -107,9 +107,17 @@ test("long session: FreshCtx stops today's leak and restores compact/prune exact
   assert.equal(pi.without.freshness_exact, false);
   assert.equal(pi.with.freshness_exact, true);
   assert.ok(pi.with.compact_calls >= 2, "pi_compact+freshctx must still compact");
+  assert.ok(
+    pi.with.usd_total_micros > pi.without.usd_total_micros,
+    "compact+freshctx USD tax is the live-block freshness cost, not a ranking we chase"
+  );
   assert.equal(hermes.without.freshness_exact, false);
   assert.equal(hermes.with.freshness_exact, true);
   assert.ok(hermes.with.prune_commits >= 2, "hermes_prune+freshctx must still prune");
+  assert.ok(
+    hermes.with.usd_total_micros > hermes.without.usd_total_micros,
+    "hermes_prune+freshctx USD tax is the live-block freshness cost, not a ranking we chase"
+  );
   assert.equal(run.addons.corvus.freshness_exact, true);
   assert.equal(run.addons.freshctx.freshness_exact, true);
   const corvusMiss = run.addons.corvus.cache_miss_tokens;
