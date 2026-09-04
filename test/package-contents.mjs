@@ -10,6 +10,13 @@ const raw = execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: root, en
 const packed = JSON.parse(raw);
 const files = packed[0].files.map((entry) => entry.path).sort();
 const binEntry = packed[0].files.find((entry) => entry.path === "bin/freshctx.mjs");
+const manifestPkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+assert.equal(Boolean(manifestPkg.scripts["bench:addon"]), false, "product package must not ship bench scripts");
+assert.deepEqual(
+  Object.keys(manifestPkg.exports ?? {}).sort(),
+  ["./errors", "./hash", "./projection", "./session", "./store", "./treesitter", "./workspace"],
+);
+
 const forbidden = /^(test|adapters|bench|autoresearch|capture|papers|examples|scripts|docs)\//u;
 assert.equal(files.some((entry) => forbidden.test(entry)), false, `unexpected package file: ${files.find((entry) => forbidden.test(entry))}`);
 for (const required of ["bin/freshctx.mjs", "src/server.mjs", "schema/freshctx-v1.json", "vendor/treesitter/tree-sitter.wasm", "LICENSE", "README.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md"]) {
