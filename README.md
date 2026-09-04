@@ -8,10 +8,11 @@ JSONL protocol over stdio. A harness-specific bridge owns its native request
 format; FreshCtx owns safe workspace resolution, Tree-sitter symbol identity,
 exact revision storage, selection, and projection.
 
-Measured with-versus-without scores (same host, FreshCtx added or not) live in
-[bench/ANNOUNCEMENT.md](bench/ANNOUNCEMENT.md). FreshCtx is an add-on, not a
-compact replacement. This package is still a prototype. Those figures are not
-a SWE pass rate. There is still no drop-in adapter.
+Measured with-versus-without scores live in
+[freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
+That repository is not this package. FreshCtx is an add-on, not a compact
+replacement. This package is still a prototype. Those figures are not a SWE
+pass rate. There is still no drop-in adapter.
 
 ## Install and initialize
 
@@ -115,6 +116,11 @@ stable ID, removes byte-range overlaps, and never exceeds the rendered byte
 budget. After the set is chosen, units render by path then id. Each frame is
 length-prefixed (`path:bytes` for a file, `path:kind:bytes` for a symbol or
 region), so code containing FreshCtx header text remains unambiguous.
+
+Programmatic imports for a local bench or bridge (`freshctx/session`,
+`freshctx/projection`, `freshctx/hash`, `freshctx/store`,
+`freshctx/workspace`, `freshctx/treesitter`) resolve through `package.json`
+`exports`. Harnesses should still speak JSONL.
 
 FreshCtx archives immutable SHA-256 blobs and session state under
 `.freshctx/` until an explicit `freshctx clean`. See [SECURITY.md](SECURITY.md)
