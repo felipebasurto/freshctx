@@ -37,8 +37,13 @@ test("layer A fixtures match frozen expects for Figure 1, symbol, omit, and budg
   assert.equal(runFor(binary, "freshctx_prepare").scores.selected_count, 0);
 
   const budget = await runFixture(byId["budget-zero"]);
-  assert.equal(runFor(budget, "freshctx_prepare").scores.live_block_bytes, 0);
-  assert.ok(runFor(budget, "corvus_full_file").scores.live_block_bytes > 0);
+  const freshBudget = runFor(budget, "freshctx_prepare");
+  const corvusBudget = runFor(budget, "corvus_full_file");
+  assert.equal(freshBudget.scores.live_block_bytes, 0);
+  assert.equal(freshBudget.scores.freshness_exact, false);
+  assert.equal(freshBudget.scores.selected_count, 0);
+  assert.ok(corvusBudget.scores.live_block_bytes > 0);
+  assert.equal(corvusBudget.scores.budget_ok, false);
 });
 
 test("layer A overlap, delimiter, and fragment fixtures hold gold", async () => {
@@ -60,12 +65,34 @@ test("layer A overlap, delimiter, and fragment fixtures hold gold", async () => 
 test("every layer A fixture has zero expect failures", async () => {
   const fixtures = await loadFixtures();
   assert.equal(fixtures.length, 12);
+  const tally = {
+    freshctx_prepare: { freshness_exact: 0, budget_ok: 0, prompt_bytes: 0, payload_bytes: 0 },
+    corvus_full_file: { freshness_exact: 0, budget_ok: 0, prompt_bytes: 0, payload_bytes: 0 },
+  };
   for (const fixture of fixtures) {
     const result = await runFixture(fixture);
     for (const run of result.runs) {
       assert.deepEqual(run.failures, [], `${fixture.id} ${run.arm}`);
+      if (run.arm === "freshctx_prepare" || run.arm === "corvus_full_file") {
+        if (run.scores.freshness_exact) tally[run.arm].freshness_exact += 1;
+        if (run.scores.budget_ok) tally[run.arm].budget_ok += 1;
+        tally[run.arm].prompt_bytes += run.scores.prompt_bytes;
+        tally[run.arm].payload_bytes += run.scores.payload_bytes;
+      }
     }
   }
+  assert.equal(tally.freshctx_prepare.budget_ok, 12);
+  assert.equal(tally.corvus_full_file.budget_ok, 11);
+  assert.equal(tally.freshctx_prepare.freshness_exact, 11);
+  assert.equal(tally.corvus_full_file.freshness_exact, 12);
+  assert.ok(
+    tally.freshctx_prepare.prompt_bytes < tally.corvus_full_file.prompt_bytes,
+    `prompt_bytes FreshCtx ${tally.freshctx_prepare.prompt_bytes} vs CORVUS ${tally.corvus_full_file.prompt_bytes}`
+  );
+  assert.ok(
+    tally.freshctx_prepare.payload_bytes < tally.corvus_full_file.payload_bytes,
+    `payload_bytes FreshCtx ${tally.freshctx_prepare.payload_bytes} vs CORVUS ${tally.corvus_full_file.payload_bytes}`
+  );
 });
 
 test("pack allowlist still excludes bench", async () => {

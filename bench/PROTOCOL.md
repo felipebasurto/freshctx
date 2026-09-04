@@ -22,6 +22,8 @@ Reference for `bench/` v1. Definitions are frozen. A later change is a new slice
 
 `freshness_exact` is true when every selected live unit equals current gold for that arm. `append_only` compares history bodies to gold. `corvus_full_file` compares live whole files to current disk files. `freshctx_prepare` compares decoded projection units to gold `kind` and gold bytes. When gold marks a path `omit`, exactness requires zero selected units for that path.
 
+On this slice FreshCtx `freshness_exact` 11 of 12 is not a public loss. The miss is budget 0: gold wants the file, the projection is empty by design. Do not edit gold or emit the file at budget 0. Do not change `freshness()` so empty plus budget 0 counts as exact; that is a new slice id. CORVUS dumps the file and fails `budget_ok`. Do not chase 12 of 12 on v1.
+
 `last_known_in_request` is true when a stale observed body appears as a history `body` entry or as the full content of a selected live unit.
 
 `budget_ok` is true when `live_block_bytes` is less than or equal to `budgetBytes`. `corvus_full_file` has no budget and still reports the flag.
@@ -92,6 +94,8 @@ Long sessions and two agents on the same five econ arms and price card. Not a li
 
 On this slice `compact_calls` counts cycles where the Pi compacted history prefix changed. `prune_commits` counts cycles where the Hermes pruned history prefix changed. That is how compact and prune fire more than once on a long run. The transformer flag remains 0 or 1 per snapshot.
 
+Five-way USD ranking is retired on purpose. Addon-v2 is the public long-session claim. Do not retain dropped `result_id`s to undercut CORVUS USD. Do not flip `drop_result_ids` on the horizon fixture. Horizon USD versus CORVUS is not a public loss. Do not chase it.
+
 `cross_agent_stale` is true when agent A's request still contains an observed body that is not on disk because agent B changed the file. Long-session rows set the field to false: there is no second agent. Self-edits stay in `stale_leakage`.
 
 `multi-agent` is two `session_id`s, one workspace. Default CORVUS behavior is `per_agent`: each agent is one CORVUS process with its own registry `S_t`. A shared-registry dump is not in this slice. Agent B files that A never read must not appear in A's FreshCtx selected units. When A drops a `result_id`, that unit leaves the FreshCtx working set and stays in A's CORVUS registry. FreshCtx `selected_paths` follow render order (`path` then `id`). That reorders the `b-edits-a-read` FreshCtx path list versus recency; USD and miss tokens are unchanged. Do not treat that as a new horizon slice.
@@ -130,7 +134,7 @@ Optional add-on pair on today's host: `today+corvus` vs `today+freshctx`. CORVUS
 
 Say better only on metrics the JSON wins **inside a pair**. `stopped_stale_leakage` is true when without leaked and with did not. `restored_freshness_exact` is true when with is exact and without is not. Never rank FreshCtx against prune as rival methods. Slice `freshctx-horizon-v1` remains on disk as the earlier five-way bake-off; do not treat those USD totals as the public with-versus-without claim.
 
-Layer A stays a model-free leak test: freshness transformer vs append-only vs CORVUS.
+Layer A stays a model-free leak test: freshness transformer vs append-only vs CORVUS. Layer A 11 of 12 and horizon-v1 USD versus CORVUS are not public losses. Do not chase them. Compact/prune-with USD above compact/prune-without is the live-block freshness cost, not a ranking to invert.
 
 ## Slice `freshctx-addon-v2`
 
@@ -148,7 +152,7 @@ If the suffix is byte-identical to the previous cycle, suffix tokens are cache h
 
 ### What “better” means
 
-Unchanged from v1. Say better only inside a pair. Do not assert FreshCtx is cheaper than Hermes prune unless the frozen JSON is; prune stubs can still win USD. The miss-tax claim is that with-FreshCtx `cache_miss_tokens` sit in band with `today+corvus`, not at the rotating-window v1 hole.
+Unchanged from v1. Say better only inside a pair. Do not assert FreshCtx is cheaper than Hermes prune unless the frozen JSON is; prune stubs can still win USD. Do not claim cheaper than compact or prune unless the JSON is. Compact/prune-with still must be `freshness_exact` and still fire. The miss-tax claim is that with-FreshCtx `cache_miss_tokens` sit in band with `today+corvus`, not at the rotating-window v1 hole. Do not add a compose-order slice to invert that tax.
 
 ## Labels
 

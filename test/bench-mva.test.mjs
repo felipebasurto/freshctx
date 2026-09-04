@@ -39,4 +39,15 @@ test("mva report is deterministic across two runs", async () => {
   const disk = await readFile(first.reportPath, "utf8");
   assert.equal(disk, `${JSON.stringify(first.report, null, 2)}\n`);
   assert.equal(first.report.task_count, 8);
+  const freshAccum = first.report.summary.arms.freshctx_prepare.accumulated_request_bytes;
+  const appendAccum = first.report.summary.arms.append_only.accumulated_request_bytes;
+  const corvusAccum = first.report.summary.arms.corvus_full_file.accumulated_request_bytes;
+  assert.ok(
+    freshAccum < appendAccum,
+    `MVA accumulated FreshCtx ${freshAccum} vs append-only ${appendAccum}`
+  );
+  assert.ok(
+    freshAccum < corvusAccum,
+    `MVA accumulated FreshCtx ${freshAccum} vs CORVUS ${corvusAccum}`
+  );
 });
