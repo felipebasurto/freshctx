@@ -12,3 +12,7 @@ test('real Pi cancels HTTP dispatch when native history fails validation', { tim
 test('real Pi cancels HTTP dispatch if the FreshCtx child dies after a read', { timeout: 30000 }, async () => {
   await runDemo({ failure: 'child-exit' });
 });
+
+test('real Pi resumes a saved read after a function moves and uses its current code', { timeout: 30000 }, async () => {
+  await runDemo({ resume: true });
+});

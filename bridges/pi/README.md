@@ -36,6 +36,27 @@ checks that the outgoing request contains current observed code with FreshCtx
 and stale code without it. Neither arm receives the unread function. No LLM is
 used, and this fixture establishes no model accuracy, cost, or SOTA claim.
 
+## Saved-session task
+
+Run `npm run demo:resume --prefix bridges/pi` from the product checkout.
+It uses a real Pi read, saves the session, shuts down the extension and child,
+changes a function's rate from 10 to 20 while inserting lines above it, then
+opens the saved session in a new Pi agent session. A scripted HTTP provider
+executes the one complete function it receives to answer `total(3)`. The check
+compares that answer with execution of the current file on disk.
+
+The plain Pi arm must expose the stale function and answer 30; the FreshCtx arm
+must expose the current function and answer 60. Neither arm rereads the file or
+receives the unread declaration. Saved Pi history must retain its original read.
+Missing code, duplicate function bodies, stale code, or a failed resume fail the
+check. Both arms make three HTTP requests. The fixture reports serialized request
+bytes; these are not billed tokens or a cost estimate.
+
+This runs in `npm test` and the product's `npm run verify`. It proves the saved
+session and HTTP path with a deterministic code consumer, not model reasoning,
+a separate Pi process restart, or compaction-summary freshness. No provider
+credentials are needed. Frozen benchmark reports remain separate.
+
 ## Boundaries and failure behavior
 
 - Only this extension's `read` results are tracked. Bash, grep, previous native
