@@ -51,5 +51,6 @@
   "author": {
     "name": "Felipe Basurto",
     "url": "https://felipebasurto.com"
-  }
+  },
+  "private": true
 }

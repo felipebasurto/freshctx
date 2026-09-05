@@ -1,6 +1,7 @@
-<img width="1254" height="1254" alt="37a9a9b4-664d-4385-a863-f331067a67fc" src="https://github.com/user-attachments/assets/29eb24fd-6328-4575-8de4-ba087e0fc3a5" />
-
 # FreshCtx
+
+Private development prototype. npm remains unpublished. Existing tags record
+historical snapshots, not an active public launch. See [development policy](AGENTS.md).
 
 FreshCtx keeps code context current without knowing anything about a model,
 provider, or agent harness. It is a local Node 22+ process that exposes a small
@@ -12,21 +13,24 @@ Measured with-versus-without scores live in
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
 That repository is not this package. FreshCtx is an add-on, not a compact
 replacement. This package is still a prototype. Those figures are not a SWE
-pass rate. The separate [Pi bridge](https://github.com/felipebasurto/freshctx-pi)
-supports Pi with OpenAI-compatible Chat Completions requests. See its compatibility
-limits and reproducible demo before use.
+pass rate. The maintained [Pi bridge](bridges/pi) supports Pi with
+OpenAI-compatible Chat Completions requests. See its compatibility limits and
+local verification fixture before use.
 
-## Install and initialize
+## Private development
 
-The npm registry package is not published yet. Install the tagged Git source
-with Node 22 or newer and Git installed:
+Requires repository access and Node 22+. From an authorized checkout:
 
 ```sh
-npm install -g git+https://github.com/felipebasurto/freshctx.git#v0.1.0
-cd /path/to/workspace
-freshctx doctor
-freshctx init
+node bin/freshctx.mjs doctor
+npm run check
+npm test
+npm run pack:check
 ```
+
+Install locally with `npm install -g .` if you need the `freshctx` command.
+Then run `freshctx init` from the workspace you want to use.
+The root package has no bridge dependencies. For Pi, follow [bridges/pi](bridges/pi).
 
 `init` creates `.freshctx/` and, when Git metadata is itself inside the
 workspace, adds only `/.freshctx/` to `.git/info/exclude`. It never changes the
@@ -53,7 +57,7 @@ FreshCtx works with any bridge that can truthfully provide all four hooks:
 3. Insert one projection in a valid location in its own request format.
 4. Share the same workspace with the FreshCtx child process.
 
-The reference integration is [freshctx-pi](https://github.com/felipebasurto/freshctx-pi).
+The maintained reference integration is [bridges/pi](bridges/pi).
 Other hosts need their own bridge implementing this contract. The core contains no vendor
 names or message schemas. A closed host that lacks any hook is incompatible;
 FreshCtx will reject it rather than pretending to provide freshness.
