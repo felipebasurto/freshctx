@@ -119,6 +119,16 @@ commit also cancels dispatch and discards the entire copied request.
 This checks freshness at commit;
 it cannot prevent edits after commit or refresh facts in assistant summaries.
 
+A session keeps at most 16 uncommitted plans, the newest by `preparedAt`.
+`prepare A` then `prepare B` does not drop A: `commit A` still succeeds while A
+is inside that bound. A 17th distinct pending plan evicts the oldest.
+Pending plans also expire after 30 minutes on the next `prepare` or `status`.
+`commit` of a dropped or expired `plan_id` returns `unknown_plan`.
+Projections are stored as content-addressed SHA-256 blobs and shared across
+plans. Evicting or expiring a pending plan deletes its projection blob only
+when no remaining pending plan, committed plan, observation, or unit revision
+references it. Other archived blobs stay until `freshctx clean`.
+
 `recover` returns archived exact bytes by FreshCtx unit and SHA-256 revision.
 `status` exposes health and counters only; it never returns source bodies.
 

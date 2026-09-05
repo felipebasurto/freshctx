@@ -398,10 +398,23 @@ export async function openSessionStore(workspace, sessionId) {
       throw error;
     }
   }
+  async function deleteBlob(revision) {
+    if (closed) fail("session_closed", "FreshCtx session is closed");
+    const digest = digestFromRevision(revision);
+    const target = path.join(initialized.root, "blobs", "sha256", digest);
+    try {
+      const entry = await lstat(target);
+      if (!entry.isFile() || entry.isSymbolicLink()) fail("state_unsafe", "FreshCtx blob path is unsafe");
+      await rm(target, { force: false });
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  }
   async function close() {
     if (closed) return;
     closed = true;
     await releaseLock(lock);
   }
-  return { state, save, putBlob, getBlob, close, root: initialized.root };
+  return { state, save, putBlob, getBlob, deleteBlob, close, root: initialized.root };
 }

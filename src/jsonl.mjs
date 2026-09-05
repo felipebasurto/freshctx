@@ -12,11 +12,30 @@ const TOO_LARGE = Object.freeze({
 });
 
 export class JsonlTransport {
+  static async waitForDrain(output) {
+    if (!output.writableNeedDrain) return;
+    if (!output.writable || output.destroyed) return;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    output.once("close", abort);
+    output.once("finish", abort);
+    output.once("error", abort);
+    try {
+      await once(output, "drain", { signal: controller.signal });
+    } catch {
+      // close, finish, or error must end the wait instead of hanging on drain
+    } finally {
+      output.off("close", abort);
+      output.off("finish", abort);
+      output.off("error", abort);
+    }
+  }
+
   static async write(output, value) {
     const payload = `${JSON.stringify(value)}\n`;
     if (output.write(payload)) return;
-    if (!output.writableNeedDrain) return;
-    await once(output, "drain");
+    if (!output.writable || output.destroyed) return;
+    await JsonlTransport.waitForDrain(output);
   }
 
   static async serve({ input, output, handle, maxLineBytes = MAX_JSONL_LINE_BYTES }) {

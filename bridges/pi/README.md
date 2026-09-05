@@ -1,7 +1,7 @@
 # FreshCtx for Pi
 
 The Pi reference bridge for [FreshCtx](https://github.com/felipebasurto/freshctx).
-Tested with `@earendil-works/pi-coding-agent@0.85.0`, Node 22, and Pi's
+Tested with `@earendil-works/pi-coding-agent@0.85.0`, Node ≥22.19.0, and Pi's
 `openai-completions` API. It replaces Pi's `read` tool with an exact workspace
 text reader, speaks `freshctx/1` to a persistent local child, and transforms a
 copy of the final Chat Completions request. It does not modify saved Pi history.

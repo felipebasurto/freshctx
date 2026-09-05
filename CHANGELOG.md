@@ -4,6 +4,12 @@
 
 - Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat
   `path:kind:N` as a Pi line offset. Bare integer headers fail closed.
+- Keep up to 16 pending plans per session so `commit A` still works after
+  `prepare B`. Evicted or expired pending projections are garbage-collected
+  when no live record references the blob.
+- JSONL writes waiting for drain terminate if the output stream closes.
+- Declare Node `>=22.19.0` for the Pi bridge to match its SDK engines.
+
 - Add a private OpenHands request-rewriting bridge under `bridges/openhands`.
   Compose order is `condense_then_freshctx`. Rejected plans cancel dispatch.
 
