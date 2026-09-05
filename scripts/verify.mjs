@@ -19,7 +19,10 @@ function run(label, command, args, cwd = root) {
   if (result.status !== 0) process.exit(result.status ?? 1);
   console.log(`${label}: passed in ${((performance.now() - start) / 1000).toFixed(2)}s`);
 }
-if (args.includes('--setup')) run('Pi dependency setup', 'npm', ['ci', '--prefix', 'bridges/pi', '--no-audit', '--no-fund']);
+if (args.includes('--setup')) {
+  run('Pi dependency setup', 'npm', ['ci', '--prefix', 'bridges/pi', '--no-audit', '--no-fund']);
+  run('OpenHands dependency setup', 'npm', ['ci', '--prefix', 'bridges/openhands', '--no-audit', '--no-fund']);
+}
 // A copied dependency can silently test another checkout after a worktree move.
 try {
   if (realpathSync(new URL('../bridges/pi/node_modules/freshctx', import.meta.url)) !== realpathSync(root)) {
@@ -33,3 +36,13 @@ run('Core behavior', 'npm', ['test']);
 run('Product package allowlist', 'npm', ['run', 'pack:check']);
 run('Pi syntax', 'npm', ['run', 'check', '--prefix', 'bridges/pi']);
 run('Pi behavior and loopback HTTP', 'npm', ['test', '--prefix', 'bridges/pi']);
+try {
+  if (realpathSync(new URL('../bridges/openhands/node_modules/freshctx', import.meta.url)) !== realpathSync(root)) {
+    throw new Error('OpenHands resolves a different product checkout');
+  }
+} catch (error) {
+  throw new Error('OpenHands must link to this checkout. Run npm run verify -- --setup.', { cause: error });
+}
+run('OpenHands syntax', 'npm', ['run', 'check', '--prefix', 'bridges/openhands']);
+run('OpenHands behavior', 'npm', ['test', '--prefix', 'bridges/openhands']);
+run('OpenHands Python hook', 'python3', ['test/test_hook.py'], fileURLToPath(new URL('../bridges/openhands', import.meta.url)));

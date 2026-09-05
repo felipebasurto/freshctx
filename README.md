@@ -13,9 +13,9 @@ Measured with-versus-without scores live in
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
 That repository is not this package. FreshCtx is an add-on, not a compact
 replacement. Those figures are not a SWE
-pass rate. The maintained [Pi bridge](bridges/pi) supports Pi with
-OpenAI-compatible Chat Completions requests. See its compatibility limits and
-local verification fixture before use.
+pass rate. The maintained host bridges are [Pi](bridges/pi) (Chat Completions) and
+[OpenHands](bridges/openhands) (real agent plus summarizing condenser). See
+each bridge's compatibility limits and local verification fixture before use.
 
 ## Private development
 
@@ -28,10 +28,11 @@ npm test
 npm run pack:check
 ```
 
-For the combined core and Pi loop, run `npm run verify -- --setup` once.
-After setup, `npm run verify` checks core behavior, the package allowlist, and
-Pi HTTP fixtures. It rejects a Pi dependency linked to another checkout. Each
-phase stops on failure, has a three-minute timeout, and reports elapsed time.
+For the combined core, Pi, and OpenHands loop, run `npm run verify -- --setup` once.
+After setup, `npm run verify` checks core behavior, the package allowlist, Pi
+HTTP fixtures, and the OpenHands request-rewrite fixtures. It rejects a bridge
+dependency linked to another checkout. Each phase stops on failure, has a
+three-minute timeout, and reports elapsed time.
 The loop uses a temporary-directory npm cache, overridable with `npm_config_cache`. HTTP fixtures require loopback
 access; they need no provider credentials.
 
@@ -44,6 +45,7 @@ For debugging, run a single test with Node, for example
 Install locally with `npm install -g .` if you need the `freshctx` command.
 Then run `freshctx init` from the workspace you want to use.
 The root package has no bridge dependencies. For Pi, follow [bridges/pi](bridges/pi).
+For OpenHands, follow [bridges/openhands](bridges/openhands).
 
 `init` creates `.freshctx/` and, when Git metadata is itself inside the
 workspace, adds only `/.freshctx/` to `.git/info/exclude`. It never changes the
@@ -70,10 +72,11 @@ FreshCtx works with any bridge that can truthfully provide all four hooks:
 3. Insert one projection in a valid location in its own request format.
 4. Share the same workspace with the FreshCtx child process.
 
-The maintained reference integration is [bridges/pi](bridges/pi).
-Other hosts need their own bridge implementing this contract. The core contains no vendor
-names or message schemas. A closed host that lacks any hook is incompatible;
-FreshCtx will reject it rather than pretending to provide freshness.
+The maintained reference integrations are [bridges/pi](bridges/pi) and
+[bridges/openhands](bridges/openhands). Other hosts need their own bridge
+implementing this contract. The core contains no vendor names or message
+schemas. A closed host that lacks any hook is incompatible; FreshCtx will
+reject it rather than pretending to provide freshness.
 
 ## Bridge contract
 
