@@ -511,7 +511,7 @@ test("a pending plan that is never committed is dropped on the next prepare or T
 });
 
 test("prepare refreshes several symbols from one file without changing commit freshness", async (t) => {
-  const source = "def alpha():\n    return 1\n\ndef beta():\n    return 2\n\ndef gamma():\n    return 3\n";
+  const source = "def alpha():\n    return 1\n\ndef beta():\n    return 2\n\ndef gamma():\n    return 3";
   const root = await workspaceFor(t, { "a.py": source });
   const session = await sessionFor(t, root);
   const names = ["alpha", "beta", "gamma"];
