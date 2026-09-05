@@ -221,13 +221,26 @@ async function acquireLifecycleLock(root, { recoverStale = false } = {}) {
 }
 
 async function acquireSessionLock(lockPath) {
-  try {
-    return await createLock(lockPath);
-  } catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    await readLockPid(lockPath);
-    fail("session_locked", "this FreshCtx session is already active");
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await createLock(lockPath);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const pid = await readLockPid(lockPath);
+      if (lockMayBeActive(pid)) fail("session_locked", "this FreshCtx session is already active");
+      const recoveryPath = `${lockPath}.recovering.${randomId("lock")}`;
+      try {
+        await rename(lockPath, recoveryPath);
+      } catch (renameError) {
+        if (renameError?.code === "ENOENT") continue;
+        throw renameError;
+      }
+      const movedPid = await readLockPid(recoveryPath);
+      if (lockMayBeActive(movedPid)) fail("session_locked", "this FreshCtx session is already active");
+      await rm(recoveryPath, { force: false });
+    }
   }
+  fail("session_locked", "this FreshCtx session could not be acquired");
 }
 
 async function removeInactiveSessionLocks(lockDirectory) {
@@ -337,7 +350,7 @@ export async function openSessionStore(workspace, sessionId) {
   const sessionKey = stableId("session", { sessionId }).slice("session_".length);
   const sessionPath = path.join(initialized.root, "sessions", `${sessionKey}.json`);
   const lockPath = path.join(initialized.root, "locks", `${sessionKey}.lock`);
-  const lifecycle = await acquireLifecycleLock(initialized.root);
+  const lifecycle = await acquireLifecycleLock(initialized.root, { recoverStale: true });
   let lock;
   let state;
   try {
