@@ -4,9 +4,14 @@ import path from "node:path";
 import test from "node:test";
 
 import { FreshCtxError } from "../src/errors.mjs";
+import { stableId } from "../src/hash.mjs";
 import { cleanStore, initializeStore, openSessionStore } from "../src/store.mjs";
 import { addWorkspaceExclude, normalizeRelativePath, openWorkspace, readStableText } from "../src/workspace.mjs";
 import { workspaceFor } from "./helpers.mjs";
+
+function sessionLockPath(root, sessionId) {
+  return path.join(root, ".freshctx", "locks", `${stableId("session", { sessionId }).slice("session_".length)}.lock`);
+}
 
 async function rejection(action, code) {
   await assert.rejects(action, (error) => error instanceof FreshCtxError && error.code === code);
@@ -76,9 +81,36 @@ test("clean cannot race an active session and explicitly recovers a dead lifecyc
 
   const lifecycle = path.join(root, ".freshctx", "locks", "lifecycle.lock");
   await writeFile(lifecycle, "999999999\n");
-  await rejection(() => openSessionStore(workspace, "blocked"), "state_busy");
+  const reclaimed = await openSessionStore(workspace, "blocked");
+  await reclaimed.close();
+  await writeFile(lifecycle, "999999999\n");
   assert.equal(await cleanStore(workspace), true);
   await assert.rejects(() => readFile(lifecycle));
+});
+
+test("open reclaims a dead session lock and still blocks a live PID", async (t) => {
+  const root = await workspaceFor(t);
+  const workspace = await openWorkspace(root);
+  await initializeStore(workspace);
+  const lockPath = sessionLockPath(root, "stale");
+  await writeFile(lockPath, "999999999\n");
+  const store = await openSessionStore(workspace, "stale");
+  t.after(() => store.close());
+  assert.equal(await readFile(lockPath, "utf8"), `${process.pid}\n`);
+  await rejection(() => openSessionStore(workspace, "stale"), "session_locked");
+});
+
+test("open reclaims a dead lifecycle lock and still blocks a live PID", async (t) => {
+  const root = await workspaceFor(t);
+  const workspace = await openWorkspace(root);
+  await initializeStore(workspace);
+  const lifecycle = path.join(root, ".freshctx", "locks", "lifecycle.lock");
+  await writeFile(lifecycle, "999999999\n");
+  const store = await openSessionStore(workspace, "reclaimed");
+  t.after(() => store.close());
+  await assert.rejects(() => readFile(lifecycle));
+  await writeFile(lifecycle, `${process.pid}\n`);
+  await rejection(() => openSessionStore(workspace, "other"), "state_busy");
 });
 
 test("a Git worktree pointer outside the workspace never receives an exclude write", async (t) => {
