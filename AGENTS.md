@@ -18,5 +18,7 @@ No unmeasured SOTA, Pass@1, dollar savings, or closed-host compatibility claims.
 For changes, run the relevant actual artifact or host test. Core changes require
 `npm run check`, `npm test`, and `npm run pack:check`. Pi changes additionally
 require `npm ci --prefix bridges/pi`, `npm run check --prefix bridges/pi`, and
-`npm test --prefix bridges/pi`. HTTP fixture tests need loopback access, not
-provider credentials. Leave pre-existing untracked bench logs alone.
+`npm test --prefix bridges/pi`. OpenHands changes additionally require
+`npm ci --prefix bridges/openhands`, `npm run check --prefix bridges/openhands`,
+and `npm test --prefix bridges/openhands`. HTTP fixture tests need loopback
+access, not provider credentials. Leave pre-existing untracked bench logs alone.

@@ -1,0 +1,38 @@
+{
+  "name": "freshctx-openhands",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenHands request-rewriting bridge for FreshCtx using the JSONL sidecar.",
+  "license": "MIT",
+  "author": {
+    "name": "Felipe Basurto",
+    "url": "https://felipebasurto.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/felipebasurto/freshctx.git",
+    "directory": "bridges/openhands"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "freshctx_openhands.py",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "openhands",
+    "freshctx"
+  ],
+  "dependencies": {
+    "freshctx": "file:../.."
+  },
+  "scripts": {
+    "check": "node --check src/audit.mjs && node --check src/bridge.mjs && node --check src/client.mjs && node --check src/condense.mjs && node --check src/config.mjs && node --check src/messages.mjs && node --check demo.mjs && python3 -m py_compile freshctx_openhands.py",
+    "test": "node --test test/*.test.mjs && python3 test/test_hook.py",
+    "demo": "node demo.mjs"
+  },
+  "private": true
+}

@@ -6,10 +6,11 @@ They share product changes through a local `file:../..` development dependency.
 No root workspace install or host dependencies are needed to use the core.
 The fixed product tarball allowlist excludes this entire directory.
 
-Pi is the only maintained integration today. Future hosts go here when their
-actual hooks can support the contract. Reuse transport or request-format code
-when a second real caller needs it; do not build a speculative adapter framework.
-Sharing an API request format does not prove another host is compatible.
+Pi and OpenHands are the maintained integrations. Future hosts go here when
+their actual hooks can support the contract. Reuse transport or request-format
+code when a second real caller needs it; do not build a speculative adapter
+framework. Sharing an API request format does not prove another host is
+compatible.
 
 ## Migration and publication
 
@@ -41,6 +42,9 @@ compaction, and resume in paired task fixtures with externally checked answers.
 Record omission, stale evidence, successful completion, and request cost
 separately. Freeze task definitions and scoring before evaluating changes. A
 header-only read must not be judged as evidence that an unread function is absent.
-Add a second host only after these boundaries are understood. Broader claims
-need repeated real-provider task results and a documented comparison baseline;
-the deterministic transport demo alone cannot justify a public launch.
+OpenHands is the preferred next live harness (real agent plus summarizing
+condenser). Its bridge rewrites the already-condensed model-bound copy so the
+current projection stays eligible. That host test is request-level; it is not
+an LLM evaluation. Broader claims need repeated real-provider task results and
+a documented comparison baseline; the deterministic transport demos alone
+cannot justify a public launch.

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add a private OpenHands request-rewriting bridge under `bridges/openhands`.
+  Compose order is `condense_then_freshctx`. Rejected plans cancel dispatch.
+
 ## 0.1.0
 
 Initial prototype release of the local Node 22+ JSONL service.
