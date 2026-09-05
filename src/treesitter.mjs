@@ -214,11 +214,32 @@ function collectDeclarations(node, output) {
   for (const child of namedChildren(node)) collectDeclarations(child, output);
 }
 
-function byteOffset(text, stringIndex) {
-  return Buffer.byteLength(text.slice(0, stringIndex), "utf8");
+class Utf16ToUtf8Index {
+  constructor(offsets) {
+    this.offsets = offsets;
+  }
+
+  // One cumulative walk so declaration offsets stay O(n) instead of O(n × decls).
+  // Prefix slices keep BOM / lone-surrogate behavior identical to Buffer.byteLength.
+  static fromText(text, indices) {
+    const unique = [...new Set(indices)].sort((a, b) => a - b);
+    const offsets = new Map();
+    let previous = 0;
+    let bytes = 0;
+    for (const index of unique) {
+      bytes += Buffer.byteLength(text.slice(previous, index), "utf8");
+      offsets.set(index, bytes);
+      previous = index;
+    }
+    return new Utf16ToUtf8Index(offsets);
+  }
+
+  byteOffset(stringIndex) {
+    return this.offsets.get(stringIndex);
+  }
 }
 
-function toUnit(sourcePath, language, text, node) {
+function toUnit(sourcePath, language, text, node, index) {
   if (node.hasError || node.isMissing) return null;
   const name = node.childForFieldName("name")?.text;
   if (!name) return null;
@@ -232,8 +253,8 @@ function toUnit(sourcePath, language, text, node) {
     selector: qualifiedSelector(node, name, kind),
     startLine: node.startPosition.row + 1,
     endLine: inclusiveEndLine(node),
-    startByte: byteOffset(text, node.startIndex),
-    endByte: byteOffset(text, node.endIndex),
+    startByte: index.byteOffset(node.startIndex),
+    endByte: index.byteOffset(node.endIndex),
   };
 }
 
@@ -252,9 +273,13 @@ export async function parseUnits({ path, text }) {
     }
     const declarations = [];
     collectDeclarations(tree.rootNode, declarations);
+    const index = Utf16ToUtf8Index.fromText(
+      text,
+      declarations.flatMap((node) => [node.startIndex, node.endIndex]),
+    );
     const found = [];
     for (const node of declarations) {
-      const unit = toUnit(path, language, text, node);
+      const unit = toUnit(path, language, text, node, index);
       if (!unit) continue;
       found.push(unit);
     }

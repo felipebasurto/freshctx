@@ -69,6 +69,34 @@ test("recency fills the budget and render order is path then id", () => {
   assert.equal(projection.text, renderUnit({ ...second }) + renderUnit({ ...first }));
 });
 
+test("a recent oversized file does not overlap-drop a smaller unit that fits the budget", () => {
+  const smallContent = "def top():\n    return 1\n";
+  const largeContent = `${smallContent}\n${"x".repeat(400)}`;
+  const small = unit({
+    id: "symbol",
+    path: "a.py",
+    kind: "symbol",
+    content: smallContent,
+    observedAt: 1,
+    startByte: 0,
+    endByte: Buffer.byteLength(smallContent, "utf8"),
+  });
+  const large = unit({
+    id: "file",
+    path: "a.py",
+    kind: "file",
+    content: largeContent,
+    observedAt: 2,
+    startByte: 0,
+    endByte: Buffer.byteLength(largeContent, "utf8"),
+  });
+  const budget = Buffer.byteLength(renderUnit(small));
+  const projection = buildProjection([large, small], budget);
+  assert.equal(projection.text, renderUnit(small));
+  assert.deepEqual(projection.selected.map((item) => item.id), ["symbol"]);
+  assert.deepEqual(projection.omitted, [{ unitId: "file", reason: "budget" }]);
+});
+
 test("UTF-8 frame budgets admit exact fits and skip an oversized recent unit", () => {
   const small = unit({ id: 'a', path: 'café.py', kind: 'file', content: '🙂\r\n', observedAt: 1 });
   const large = unit({ id: 'b', path: 'large.py', kind: 'file', content: 'x'.repeat(100), observedAt: 2 });

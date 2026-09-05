@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
 import { FreshCtxError } from "../src/errors.mjs";
-import { revisionFor } from "../src/hash.mjs";
+import { revisionFor, stableId } from "../src/hash.mjs";
 import { decodeProjectionUnits } from "../src/projection.mjs";
-import { FreshCtxSession } from "../src/session.mjs";
+import { FreshCtxSession, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
 import { openWorkspace } from "../src/workspace.mjs";
 import { openSessionStore } from "../src/store.mjs";
 import { content, decodedProjection, sessionFor, workspaceFor } from "./helpers.mjs";
+
+function sessionFile(root, sessionId = "session") {
+  const key = stableId("session", { sessionId }).slice("session_".length);
+  return path.join(root, ".freshctx", "sessions", `${key}.json`);
+}
 
 test("a partial read projects the current Tree-sitter symbol, never its historical body", async (t) => {
   const before = "def greet():\n    return 'old'\n\ndef other():\n    return 2\n";
@@ -181,8 +186,8 @@ test("reserved JavaScript property names remain stable host result and request i
     assert.equal((await first.commit({ planId: plan.plan_id })).idempotent, true);
     plans.set(identity, plan);
   }
-  assert.equal(first.status().counts.observations, identities.length);
-  assert.equal(first.status().counts.committed_plans, identities.length);
+  assert.equal((await first.status()).counts.observations, identities.length);
+  assert.equal((await first.status()).counts.committed_plans, identities.length);
   await firstStore.close();
 
   const secondStore = await openSessionStore(workspace, "reserved-identities");
@@ -451,4 +456,85 @@ test("symbol file-fallback does not clobber a sibling file unit or forget the se
   assert.equal(unit.kind, "symbol");
   assert.match(unit.content, /return 3/u);
   assert.doesNotMatch(unit.content, /def other/u);
+});
+
+test("repeated identical prepares and commits do not rewrite full projections into session state", async (t) => {
+  const source = `${"x".repeat(60 * 1024)}\n`;
+  const root = await workspaceFor(t, { "a.py": source });
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
+  const first = await session.prepare({ requestId: "same", resultIds: ["r"], budgetBytes: source.length + 4096 });
+  assert.equal((await session.commit({ planId: first.plan_id })).idempotent, false);
+  const afterFirst = Buffer.byteLength(await readFile(sessionFile(root), "utf8"));
+  for (let index = 0; index < 20; index += 1) {
+    const again = await session.prepare({ requestId: "same", resultIds: ["r"], budgetBytes: source.length + 4096 });
+    assert.deepEqual(again, first);
+    assert.equal((await session.commit({ planId: first.plan_id })).idempotent, true);
+  }
+  assert.equal(Buffer.byteLength(await readFile(sessionFile(root), "utf8")), afterFirst);
+
+  for (let index = 0; index < 20; index += 1) {
+    const plan = await session.prepare({ requestId: `distinct-${index}`, resultIds: ["r"], budgetBytes: source.length + 4096 });
+    assert.equal(plan.projection_sha256, first.projection_sha256);
+    assert.equal((await session.commit({ planId: plan.plan_id })).idempotent, false);
+  }
+  const persisted = await readFile(sessionFile(root), "utf8");
+  assert.equal(persisted.includes("projection_utf8_base64"), false);
+  assert.ok(Buffer.byteLength(persisted) < afterFirst + 20 * 4096, "compact plan records must not grow like copied projections");
+});
+
+test("a pending plan that is never committed is dropped on the next prepare or TTL", async (t) => {
+  const source = "def top():\n    return 1\n";
+  const root = await workspaceFor(t, { "a.py": source });
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
+  const first = await session.prepare({ requestId: "pending-a", resultIds: ["r"], budgetBytes: 4096 });
+  assert.equal((await session.status()).counts.pending_plans, 1);
+  const second = await session.prepare({ requestId: "pending-b", resultIds: ["r"], budgetBytes: 4096 });
+  assert.equal((await session.status()).counts.pending_plans, 1);
+  await assert.rejects(
+    () => session.commit({ planId: first.plan_id }),
+    (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
+  );
+  assert.equal((await session.commit({ planId: second.plan_id })).idempotent, false);
+
+  const leaked = await session.prepare({ requestId: "pending-ttl", resultIds: ["r"], budgetBytes: 4096 });
+  const pending = session.store.state.pendingPlans["pending-ttl"];
+  pending.preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
+  assert.equal((await session.status()).counts.pending_plans, 0);
+  await assert.rejects(
+    () => session.commit({ planId: leaked.plan_id }),
+    (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
+  );
+  const retried = await session.prepare({ requestId: "pending-ttl-retry", resultIds: ["r"], budgetBytes: 4096 });
+  assert.equal((await session.commit({ planId: retried.plan_id })).idempotent, false);
+});
+
+test("prepare refreshes several symbols from one file without changing commit freshness", async (t) => {
+  const source = "def alpha():\n    return 1\n\ndef beta():\n    return 2\n\ndef gamma():\n    return 3\n";
+  const root = await workspaceFor(t, { "a.py": source });
+  const session = await sessionFor(t, root);
+  const names = ["alpha", "beta", "gamma"];
+  for (const name of names) {
+    const start = source.indexOf(`def ${name}`);
+    const separator = source.indexOf("\n\n", start);
+    const body = source.slice(start, separator === -1 ? source.length : separator);
+    const startByte = Buffer.byteLength(source.slice(0, start));
+    await session.observe({
+      resultId: name,
+      path: "a.py",
+      content: content(body),
+      range: { startByte, endByte: startByte + Buffer.byteLength(body) },
+      turn: 1,
+    });
+  }
+  const plan = await session.prepare({ requestId: "shared-parse", resultIds: names, budgetBytes: 4096 });
+  const units = decodeProjectionUnits(decodedProjection(plan));
+  assert.equal(units.length, 3);
+  assert.deepEqual(units.map((unit) => unit.kind), ["symbol", "symbol", "symbol"]);
+  await writeFile(path.join(root, "a.py"), source.replace("return 1", "return 9"));
+  await assert.rejects(
+    () => session.commit({ planId: plan.plan_id }),
+    (error) => error instanceof FreshCtxError && error.code === "stale_plan",
+  );
 });
