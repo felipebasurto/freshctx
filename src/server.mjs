@@ -46,7 +46,7 @@ export async function runServer({ root, input = process.stdin, output = process.
       case "recover":
         return response(request.id, await session.recover(request));
       case "status":
-        return response(request.id, session.status());
+        return response(request.id, await session.status());
       default:
         fail("unknown_operation", `unknown operation: ${request.op}`);
     }

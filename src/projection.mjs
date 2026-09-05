@@ -1,4 +1,4 @@
-import { rankActiveUnits } from "./selection.mjs";
+import { rankActiveUnits, UnitSelection } from "./selection.mjs";
 
 function projectionBytes(text) {
   return Buffer.byteLength(text, "utf8");
@@ -62,6 +62,10 @@ export function buildProjection(units, budgetBytes) {
   }
   let selectedBytes = 0;
   for (const unit of ranked.candidates) {
+    if (selected.some((admitted) => UnitSelection.overlap(admitted, unit))) {
+      omitted.push({ unitId: unit.id, reason: "overlap" });
+      continue;
+    }
     const unitBytes = projectionBytes(renderUnit(unit));
     if (unitBytes <= budgetBytes - selectedBytes) {
       selected.push(unit);

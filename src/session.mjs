@@ -162,6 +162,67 @@ function planFingerprint(request) {
   return JSON.stringify({ resultIds: [...request.resultIds].sort(), budgetBytes: request.budgetBytes });
 }
 
+export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
+
+class PrepareSourceCache {
+  constructor() {
+    // One disk snapshot and Tree-sitter index per path for this prepare.
+    this.byPath = new Map();
+  }
+
+  static async snapshot(cache, workspace, sourcePath) {
+    const existing = cache.byPath.get(sourcePath);
+    if (existing) return existing.snapshot;
+    const snapshot = await readStableText(workspace, sourcePath);
+    cache.byPath.set(sourcePath, { snapshot, parsed: undefined });
+    return snapshot;
+  }
+
+  static async parsed(cache, sourcePath) {
+    const entry = cache.byPath.get(sourcePath);
+    if (entry.parsed === undefined) {
+      entry.parsed = await parseUnits({ path: sourcePath, text: entry.snapshot.text });
+    }
+    return entry.parsed;
+  }
+}
+
+class StoredPlan {
+  static compact(response) {
+    const { projection_utf8_base64: _omit, ...compact } = response;
+    return compact;
+  }
+
+  static async hydrate(store, record) {
+    const response = clone(record.response);
+    if (Object.hasOwn(response, "projection_utf8_base64")) return response;
+    const bytes = await store.getBlob(response.projection_sha256);
+    if (!bytes) fail("missing_blob", "archived projection is unavailable");
+    response.projection_utf8_base64 = bytes.toString("base64");
+    return response;
+  }
+
+  static dropOtherPending(state, keepRequestId) {
+    let changed = false;
+    for (const requestId of Object.keys(state.pendingPlans)) {
+      if (requestId === keepRequestId) continue;
+      deleteRecordValue(state.pendingPlans, requestId);
+      changed = true;
+    }
+    return changed;
+  }
+
+  static dropExpiredPending(state, now = Date.now()) {
+    let changed = false;
+    for (const [requestId, plan] of Object.entries(state.pendingPlans)) {
+      if (!Number.isSafeInteger(plan.preparedAt) || now - plan.preparedAt <= PENDING_PLAN_TTL_MS) continue;
+      deleteRecordValue(state.pendingPlans, requestId);
+      changed = true;
+    }
+    return changed;
+  }
+}
+
 export class FreshCtxSession {
   constructor({ workspace, store, sessionId, adapter = "unknown" }) {
     this.workspace = workspace;
@@ -303,10 +364,10 @@ export class FreshCtxSession {
     }
   }
 
-  async currentCandidate(unit, observedAt) {
+  async currentCandidate(unit, observedAt, cache = new PrepareSourceCache()) {
     let snapshot;
     try {
-      snapshot = await readStableText(this.workspace, unit.path);
+      snapshot = await PrepareSourceCache.snapshot(cache, this.workspace, unit.path);
     } catch (error) {
       return unresolvedUnit({
         id: unit.id,
@@ -325,7 +386,7 @@ export class FreshCtxSession {
     if (unit.kind === "region") {
       return this.currentRegion(unit, snapshot, observedAt);
     }
-    const parsed = await parseUnits({ path: unit.path, text: snapshot.text });
+    const parsed = await PrepareSourceCache.parsed(cache, unit.path);
     const matches = parsed.status === "ok"
       ? parsed.units.filter((candidate) => candidate.selector === unit.selector)
       : [];
@@ -339,12 +400,14 @@ export class FreshCtxSession {
 
   async prepare(request) {
     const fingerprint = planFingerprint(request);
+    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
     const known = recordValue(this.store.state.pendingPlans, request.requestId)
       ?? recordValue(this.store.state.committedPlans, request.requestId);
     if (known) {
       if (known.fingerprint !== fingerprint) fail("idempotency_conflict", "request_id was already prepared with different inputs");
-      return clone(known.response);
+      return StoredPlan.hydrate(this.store, known);
     }
+    const refresh = new PrepareSourceCache();
 
     const active = request.resultIds.map((resultId) => recordValue(this.store.state.observations, resultId)).filter(Boolean);
     const unknown = request.resultIds
@@ -371,7 +434,7 @@ export class FreshCtxSession {
       }
       let candidate = refreshed.get(original.id);
       if (!candidate) {
-        candidate = await this.currentCandidate(original, observation.observedAt);
+        candidate = await this.currentCandidate(original, observation.observedAt, refresh);
         refreshed.set(original.id, candidate);
       }
       if (candidate.state !== "resolved") {
@@ -406,16 +469,25 @@ export class FreshCtxSession {
       path: unit.path,
       sourceRevision: unit.sourceRevision,
     }])).values()];
+    const projectionBytes = Buffer.from(projection.text, "utf8");
+    await this.store.putBlob(projectionBytes);
     const response = {
       plan_id: planId,
       replacements,
-      projection_utf8_base64: Buffer.from(projection.text, "utf8").toString("base64"),
+      projection_utf8_base64: projectionBytes.toString("base64"),
       projection_sha256: revisionFor(projection.text),
       selected: projection.selected.map((unit) => unit.id),
       omitted: projection.omitted,
       unresolved,
     };
-    setRecordValue(this.store.state.pendingPlans, request.requestId, { planId, fingerprint, response, references });
+    StoredPlan.dropOtherPending(this.store.state, request.requestId);
+    setRecordValue(this.store.state.pendingPlans, request.requestId, {
+      planId,
+      fingerprint,
+      response: StoredPlan.compact(response),
+      references,
+      preparedAt: Date.now(),
+    });
     await this.store.save();
     return clone(response);
   }
@@ -469,7 +541,8 @@ export class FreshCtxSession {
     };
   }
 
-  status() {
+  async status() {
+    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
     const state = this.store.state;
     return {
       healthy: true,

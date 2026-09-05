@@ -50,3 +50,26 @@ test("partial ranges resolve one enclosing symbol with UTF-8 byte offsets", asyn
   assert.equal(resolved.unit?.selector, "function top");
   assert.equal(resolved.unit?.startByte, startByte);
 });
+
+test("shared UTF-16 to UTF-8 offsets stay aligned for BOM, emoji, and many declarations", async () => {
+  const text = `\uFEFF# 🙂\n${Array.from({ length: 48 }, (_, index) => `def f${index}():\n    return ${index}\n`).join("\n")}`;
+  const parsed = await parseUnits({ path: "a.py", text });
+  assert.equal(parsed.status, "ok");
+  assert.equal(parsed.units.length, 48);
+  const bytes = Buffer.from(text, "utf8");
+  for (const unit of parsed.units) {
+    const name = unit.selector.slice("function ".length);
+    const prefix = text.slice(0, text.indexOf(`def ${name}(`));
+    assert.equal(unit.startByte, Buffer.byteLength(prefix, "utf8"), name);
+    assert.equal(bytes.subarray(unit.startByte, unit.endByte).toString("utf8").startsWith(`def ${name}(`), true, name);
+  }
+  const cafe = "\uFEFFdef café():\n    return '🙂'\n";
+  const startByte = Buffer.byteLength("\uFEFF", "utf8");
+  const resolved = await uniqueUnitForRange({
+    path: "a.py",
+    text: cafe,
+    range: { startByte, endByte: startByte + 8 },
+  });
+  assert.equal(resolved.unit?.selector, "function café");
+  assert.equal(resolved.unit?.startByte, startByte);
+});
