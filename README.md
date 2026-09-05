@@ -12,13 +12,19 @@ Measured with-versus-without scores live in
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
 That repository is not this package. FreshCtx is an add-on, not a compact
 replacement. This package is still a prototype. Those figures are not a SWE
-pass rate. There is still no drop-in adapter.
+pass rate. The separate [Pi bridge](https://github.com/felipebasurto/freshctx-pi)
+supports Pi with OpenAI-compatible Chat Completions requests. See its compatibility
+limits and reproducible demo before use.
 
 ## Install and initialize
 
+The npm registry package is not published yet. Install the tagged Git source
+with Node 22 or newer and Git installed:
+
 ```sh
-npm install -g freshctx
+npm install -g git+https://github.com/felipebasurto/freshctx.git#v0.1.0
 cd /path/to/workspace
+freshctx doctor
 freshctx init
 ```
 
@@ -47,8 +53,8 @@ FreshCtx works with any bridge that can truthfully provide all four hooks:
 3. Insert one projection in a valid location in its own request format.
 4. Share the same workspace with the FreshCtx child process.
 
-That includes bridges for Pi, Hermes, OpenCode, Cursor, Claude, Codex, or a
-future harness when they implement the contract. The core contains no vendor
+The reference integration is [freshctx-pi](https://github.com/felipebasurto/freshctx-pi).
+Other hosts need their own bridge implementing this contract. The core contains no vendor
 names or message schemas. A closed host that lacks any hook is incompatible;
 FreshCtx will reject it rather than pretending to provide freshness.
 
@@ -87,8 +93,10 @@ result, replacement markers, and one current code projection encoded as UTF-8
 base64. The bridge must verify every expected hash, replace only those native
 results in a copy of its request, insert the projection, and validate its own
 format. If any step fails, it discards the entire plan and sends its original
-request. After it applied the plan, it calls `commit`. `commit` revalidates the
-selected file revisions and returns `stale_plan` if anything changed.
+request. Before dispatching the copied request, it calls `commit`. `commit` revalidates
+the selected file revisions and returns `stale_plan` if anything changed. A failed
+commit also discards the entire copied request. This checks freshness at commit;
+it cannot prevent edits after commit or refresh facts in assistant summaries.
 
 `recover` returns archived exact bytes by FreshCtx unit and SHA-256 revision.
 `status` exposes health and counters only; it never returns source bodies.

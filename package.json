@@ -39,5 +39,17 @@
     "tree-sitter",
     "agent",
     "jsonl"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felipebasurto/freshctx.git"
+  },
+  "homepage": "https://github.com/felipebasurto/freshctx#readme",
+  "bugs": {
+    "url": "https://github.com/felipebasurto/freshctx/issues"
+  },
+  "author": {
+    "name": "Felipe Basurto",
+    "url": "https://felipebasurto.com"
+  }
 }

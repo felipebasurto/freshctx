@@ -20,5 +20,5 @@ retried once and otherwise omitted as unstable snapshots.
 Run it as a local, single-user process. Do not expose its stdio protocol as a
 network service or send its archive to an untrusted system.
 
-To report a vulnerability, contact the maintainer privately with a minimal
-reproduction. Please do not include proprietary source code in the report.
+To report a vulnerability, email Felipe Basurto at
+[hello@felipebasurto.com](mailto:hello@felipebasurto.com) with a minimal reproduction. Please do not include proprietary source code in the report.
