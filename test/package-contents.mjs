@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const raw = execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: root, encoding: "utf8" });
+// Packing needs a writable cache even though it does not download dependencies.
+const cache = await mkdtemp(path.join(tmpdir(), "freshctx-pack-"));
+let raw;
+try {
+  raw = execFileSync("npm", ["pack", "--dry-run", "--json", "--cache", cache], { cwd: root, encoding: "utf8" });
+} finally {
+  await rm(cache, { recursive: true, force: true });
+}
 const packed = JSON.parse(raw);
 const files = packed[0].files.map((entry) => entry.path).sort();
 const binEntry = packed[0].files.find((entry) => entry.path === "bin/freshctx.mjs");

@@ -60,10 +60,12 @@ export function buildProjection(units, budgetBytes) {
       omitted: [...omitted, ...ranked.candidates.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
     };
   }
+  let selectedBytes = 0;
   for (const unit of ranked.candidates) {
-    const trial = renderEnvelope([...selected, unit]);
-    if (projectionBytes(trial) <= budgetBytes) {
+    const unitBytes = projectionBytes(renderUnit(unit));
+    if (unitBytes <= budgetBytes - selectedBytes) {
       selected.push(unit);
+      selectedBytes += unitBytes;
     } else {
       omitted.push({ unitId: unit.id, reason: "budget" });
     }

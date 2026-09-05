@@ -68,3 +68,14 @@ test("recency fills the budget and render order is path then id", () => {
   assert.deepEqual(decodeProjectionUnits(projection.text).map((item) => item.path), ["a.py", "z.py"]);
   assert.equal(projection.text, renderUnit({ ...second }) + renderUnit({ ...first }));
 });
+
+test("UTF-8 frame budgets admit exact fits and skip an oversized recent unit", () => {
+  const small = unit({ id: 'a', path: 'café.py', kind: 'file', content: '🙂\r\n', observedAt: 1 });
+  const large = unit({ id: 'b', path: 'large.py', kind: 'file', content: 'x'.repeat(100), observedAt: 2 });
+  const exact = Buffer.byteLength(renderUnit(small));
+  const projection = buildProjection([large, small], exact);
+  assert.equal(projection.text, renderUnit(small));
+  assert.equal(projection.bytes, exact);
+  assert.deepEqual(projection.omitted, [{ unitId: 'b', reason: 'budget' }]);
+  assert.equal(buildProjection([small], exact - 1).text, '');
+});

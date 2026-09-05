@@ -1,6 +1,6 @@
 # FreshCtx for Pi
 
-A separate reference bridge for [FreshCtx](https://github.com/felipebasurto/freshctx).
+The Pi reference bridge for [FreshCtx](https://github.com/felipebasurto/freshctx).
 Tested with `@earendil-works/pi-coding-agent@0.85.0`, Node 22, and Pi's
 `openai-completions` API. It replaces Pi's `read` tool with an exact workspace
 text reader, speaks `freshctx/1` to a persistent local child, and transforms a
@@ -66,13 +66,7 @@ used, and this fixture establishes no model accuracy, cost, or SOTA claim.
 FreshCtx keeps historical source in `.freshctx/`. Run `freshctx clean` when it
 is no longer needed. Read the product [security policy](https://github.com/felipebasurto/freshctx/blob/main/SECURITY.md).
 
-## Validate
-
-```sh
-npm ci
-npm run check
-npm test
-```
+## Coverage
 
 Tests cover real Pi HTTP serialization and rejected-request cancellation, Unicode/CRLF ranges, later symbol
 reads, duplicate IDs, altered results, deleted files, a zero-byte budget,

@@ -108,3 +108,27 @@ test('dead or stalled child rejects promptly and remains closed', async t => {
   await assert.rejects(client.request('status'), /timed out/);
   await assert.rejects(client.request('status'), /timed out/);
 });
+
+test('resume follows a moved symbol; compacted results stay inactive until read again', async t => {
+  const { root, bridge } = await fixture(t);
+  const read = await bridge.read('read_1', { path: 'price.py', offset: 4, limit: 2 });
+  await bridge.close();
+  await writeFile(join(root, 'price.py'), '# inserted\n# another line\n' + body.replace('return RATE', 'return RATE * 2'));
+  const resumed = new Bridge({ root, sessionId: 'test' });
+  t.after(() => resumed.close());
+  const rewritten = await resumed.rewrite(request(read.content[0].text));
+  assert.match(rewritten.messages.at(-1).content, /return RATE \* 2/);
+  assert.doesNotMatch(rewritten.messages.at(-1).content, /inserted|RATE = 10/);
+
+  // Model the final request after compaction removes the native read result.
+  // Assistant summaries are outside the bridge's freshness contract.
+  const compacted = { model: 'test', messages: [{ role: 'user', content: 'Continue after compaction' }] };
+  assert.deepEqual(await resumed.rewrite(compacted), compacted);
+  const current = await resumed.read('read_2', { path: 'price.py', offset: 6, limit: 2 });
+  const next = request(current.content[0].text);
+  next.messages[0].tool_calls[0].id = 'read_2';
+  next.messages[1].tool_call_id = 'read_2';
+  const reread = await resumed.rewrite(next);
+  assert.match(reread.messages.at(-1).content, /return RATE \* 2/);
+  assert.doesNotMatch(JSON.stringify(reread), /read_1/);
+});

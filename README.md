@@ -12,7 +12,7 @@ exact revision storage, selection, and projection.
 Measured with-versus-without scores live in
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
 That repository is not this package. FreshCtx is an add-on, not a compact
-replacement. This package is still a prototype. Those figures are not a SWE
+replacement. Those figures are not a SWE
 pass rate. The maintained [Pi bridge](bridges/pi) supports Pi with
 OpenAI-compatible Chat Completions requests. See its compatibility limits and
 local verification fixture before use.
@@ -27,6 +27,19 @@ npm run check
 npm test
 npm run pack:check
 ```
+
+For the combined core and Pi loop, run `npm run verify -- --setup` once.
+After setup, `npm run verify` checks core behavior, the package allowlist, and
+Pi HTTP fixtures. It rejects a Pi dependency linked to another checkout. Each
+phase stops on failure, has a three-minute timeout, and reports elapsed time.
+The loop uses a temporary-directory npm cache, overridable with `npm_config_cache`. HTTP fixtures require loopback
+access; they need no provider credentials.
+
+For a separate Git worktree, run setup there too. Tests create temporary
+workspaces and clean them up. `init` intentionally does not write through a
+worktree Git pointer; keep any `.freshctx/` state out of commits yourself.
+For debugging, run a single test with Node, for example
+`node --inspect-brk --test --test-name-pattern="resume" bridges/pi/test/bridge.test.mjs`.
 
 Install locally with `npm install -g .` if you need the `freshctx` command.
 Then run `freshctx init` from the workspace you want to use.
@@ -96,10 +109,11 @@ byte range. Before sending a provider request, call `prepare` with the native
 result, replacement markers, and one current code projection encoded as UTF-8
 base64. The bridge must verify every expected hash, replace only those native
 results in a copy of its request, insert the projection, and validate its own
-format. If any step fails, it discards the entire plan and sends its original
-request. Before dispatching the copied request, it calls `commit`. `commit` revalidates
-the selected file revisions and returns `stale_plan` if anything changed. A failed
-commit also discards the entire copied request. This checks freshness at commit;
+format. If any step fails, the bridge must discard the entire plan and cancel dispatch.
+Sending the original request can leak stale code. Before dispatching the copied
+request, it calls `commit`. `commit` revalidates the selected file revisions and returns `stale_plan` if anything changed. A failed
+commit also cancels dispatch and discards the entire copied request.
+This checks freshness at commit;
 it cannot prevent edits after commit or refresh facts in assistant summaries.
 
 `recover` returns archived exact bytes by FreshCtx unit and SHA-256 revision.
