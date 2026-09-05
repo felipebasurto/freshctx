@@ -546,9 +546,10 @@ test("pending plans keep the newest MAX_PENDING_PLANS by preparedAt", async (t) 
   const session = await sessionFor(t, root);
   await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
   const plans = [];
+  const newest = Date.now();
   for (let index = 0; index < MAX_PENDING_PLANS; index += 1) {
     const plan = await session.prepare({ requestId: `bound-${index}`, resultIds: ["r"], budgetBytes: 4096 });
-    session.store.state.pendingPlans[`bound-${index}`].preparedAt = 1_000 + index;
+    session.store.state.pendingPlans[`bound-${index}`].preparedAt = newest - (MAX_PENDING_PLANS - index) * 1_000;
     plans.push(plan);
   }
   plans.push(await session.prepare({ requestId: `bound-${MAX_PENDING_PLANS}`, resultIds: ["r"], budgetBytes: 4096 }));

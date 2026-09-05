@@ -210,7 +210,7 @@ test("JSONL fails an oversized partial line without hanging and still serves the
   });
   input.write("x".repeat(32));
   await new Promise((resolve) => setImmediate(resolve));
-  input.write('\n{"id":"after-partial"}\n');
+  input.write('\n{"id":"ok"}\n');
   input.end();
   await Promise.race([
     running,
@@ -219,7 +219,7 @@ test("JSONL fails an oversized partial line without hanging and still serves the
   const responses = body.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(responses[0].error.code, "request_too_large");
   assert.equal(responses[1].ok, true);
-  assert.equal(responses[1].id, "after-partial");
+  assert.equal(responses[1].id, "ok");
 });
 
 test("JSONL handles multiple frames in one chunk", async () => {
