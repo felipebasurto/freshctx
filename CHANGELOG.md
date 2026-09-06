@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat
+  `path:kind:N` as a Pi line offset. Bare integer headers fail closed.
 - Add a private OpenHands request-rewriting bridge under `bridges/openhands`.
   Compose order is `condense_then_freshctx`. Rejected plans cancel dispatch.
 

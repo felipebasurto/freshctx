@@ -4,6 +4,27 @@ function projectionBytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
 
+const CONTENT_BYTES_SUFFIX = "bytes";
+
+function formatContentBytes(contentBytes) {
+  return `${contentBytes}${CONTENT_BYTES_SUFFIX}`;
+}
+
+function parseContentBytesField(field) {
+  if (!field.endsWith(CONTENT_BYTES_SUFFIX)) {
+    throw new Error("invalid FreshCtx content-bytes header");
+  }
+  const raw = field.slice(0, -CONTENT_BYTES_SUFFIX.length);
+  if (!/^\d+$/u.test(raw)) {
+    throw new Error("invalid FreshCtx content-bytes header");
+  }
+  const contentBytes = Number(raw);
+  if (!Number.isSafeInteger(contentBytes) || contentBytes < 0) {
+    throw new Error("invalid FreshCtx content-bytes header");
+  }
+  return contentBytes;
+}
+
 function assertKind(kind) {
   switch (kind) {
     case "file":
@@ -30,8 +51,8 @@ export function renderUnit(unit) {
   const contentBytes = projectionBytes(unit.content);
   const kind = assertKind(unit.kind);
   const header = kind === "file"
-    ? `${unit.path}:${contentBytes}`
-    : `${unit.path}:${kind}:${contentBytes}`;
+    ? `${unit.path}:${formatContentBytes(contentBytes)}`
+    : `${unit.path}:${kind}:${formatContentBytes(contentBytes)}`;
   return `${header}\n${unit.content}`;
 }
 
@@ -95,10 +116,7 @@ export function buildProjection(units, budgetBytes) {
 function parseHeader(header) {
   const lastColon = header.lastIndexOf(":");
   if (lastColon <= 0) throw new Error("invalid FreshCtx unit header");
-  const contentBytes = Number(header.slice(lastColon + 1));
-  if (!Number.isSafeInteger(contentBytes) || contentBytes < 0) {
-    throw new Error("invalid FreshCtx content-bytes header");
-  }
+  const contentBytes = parseContentBytesField(header.slice(lastColon + 1));
   const prefix = header.slice(0, lastColon);
   const kindColon = prefix.lastIndexOf(":");
   if (kindColon !== -1) {

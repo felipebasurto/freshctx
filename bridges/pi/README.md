@@ -95,4 +95,14 @@ symlinks, traversal, stale commits, resume, and child timeouts. Scores from
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench) belong to its
 frozen fixtures and are not scores for this Pi integration.
 
+## Product PCR pointer
+
+Product PCR `0001` (2026-09-06): projection frames use `Nbytes` so a trailing
+integer cannot be read as a Pi line offset. See [docs/pcr/0001-projection-byte-length-cue.md](../../docs/pcr/0001-projection-byte-length-cue.md)
+and [docs/pcr/INDEX.md](../../docs/pcr/INDEX.md).
+
+Living-suite PCR numbers stay in the research repository
+`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs into this
+package.
+
 MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).

@@ -143,8 +143,9 @@ at most 512 KiB, and stable across a double-stat snapshot. Selection considers
 only active native results, sorts deterministically by recent observation and
 stable ID, removes byte-range overlaps, and never exceeds the rendered byte
 budget. After the set is chosen, units render by path then id. Each frame is
-length-prefixed (`path:bytes` for a file, `path:kind:bytes` for a symbol or
-region), so code containing FreshCtx header text remains unambiguous.
+length-prefixed (`path:Nbytes` for a file, `path:kind:Nbytes` for a symbol or
+region). The trailing field is a UTF-8 byte length, never a line offset, so
+code containing FreshCtx header text remains unambiguous.
 
 Programmatic imports for a local bench or bridge (`freshctx/session`,
 `freshctx/projection`, `freshctx/hash`, `freshctx/store`,
