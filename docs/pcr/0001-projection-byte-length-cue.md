@@ -32,6 +32,8 @@ or freshctx-bench files were edited. Diagnostic cited from bench commit
 | `npm run pack:check` | yes | 0 | `package contains 28 allowlisted files; 8 Tree-sitter assets verified`; `docs/` excluded |
 | `npm run check --prefix bridges/pi` | yes | 0 | |
 | `npm test --prefix bridges/pi` | yes | 0 | `# tests 15` `# pass 15` `# fail 0` `# duration_ms 1711.028339` |
+| `npm run check --prefix bridges/openhands` | yes | 0 | format change is core; host still consumes the projection |
+| `npm test --prefix bridges/openhands` | yes | 0 | `# tests 13` `# pass 13` `# fail 0`; Python hook `Ran 3 tests` `OK` |
 | `npm run evaluate` | no | | not on this product branch |
 | `npm run ctxbench` | no | | bench repo; not touched |
 | `npm run demo` | no | | not required for this cue |
