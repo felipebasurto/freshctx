@@ -163,6 +163,9 @@ function planFingerprint(request) {
 }
 
 export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
+// A session keeps at most this many uncommitted plans, newest preparedAt first.
+// prepare A → prepare B → commit A succeeds when A is still inside this window.
+export const MAX_PENDING_PLANS = 16;
 
 class PrepareSourceCache {
   constructor() {
@@ -202,16 +205,6 @@ class StoredPlan {
     return response;
   }
 
-  static dropOtherPending(state, keepRequestId) {
-    let changed = false;
-    for (const requestId of Object.keys(state.pendingPlans)) {
-      if (requestId === keepRequestId) continue;
-      deleteRecordValue(state.pendingPlans, requestId);
-      changed = true;
-    }
-    return changed;
-  }
-
   static dropExpiredPending(state, now = Date.now()) {
     let changed = false;
     for (const [requestId, plan] of Object.entries(state.pendingPlans)) {
@@ -220,6 +213,21 @@ class StoredPlan {
       changed = true;
     }
     return changed;
+  }
+
+  static boundPending(state) {
+    const entries = Object.entries(state.pendingPlans);
+    if (entries.length <= MAX_PENDING_PLANS) return;
+    const ranked = entries
+      .map(([requestId, plan], index) => ({ requestId, plan, index }))
+      .sort((left, right) => {
+        const byTime = (left.plan.preparedAt ?? 0) - (right.plan.preparedAt ?? 0);
+        if (byTime !== 0) return byTime;
+        return left.index - right.index;
+      });
+    for (const { requestId } of ranked.slice(0, entries.length - MAX_PENDING_PLANS)) {
+      deleteRecordValue(state.pendingPlans, requestId);
+    }
   }
 }
 
@@ -480,7 +488,6 @@ export class FreshCtxSession {
       omitted: projection.omitted,
       unresolved,
     };
-    StoredPlan.dropOtherPending(this.store.state, request.requestId);
     setRecordValue(this.store.state.pendingPlans, request.requestId, {
       planId,
       fingerprint,
@@ -488,6 +495,7 @@ export class FreshCtxSession {
       references,
       preparedAt: Date.now(),
     });
+    StoredPlan.boundPending(this.store.state);
     await this.store.save();
     return clone(response);
   }

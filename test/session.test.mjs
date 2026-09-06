@@ -1,19 +1,41 @@
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
 import { FreshCtxError } from "../src/errors.mjs";
-import { revisionFor, stableId } from "../src/hash.mjs";
+import { digestFromRevision, revisionFor, stableId } from "../src/hash.mjs";
 import { decodeProjectionUnits } from "../src/projection.mjs";
-import { FreshCtxSession, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
+import { FreshCtxSession, MAX_PENDING_PLANS, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
 import { openWorkspace } from "../src/workspace.mjs";
-import { openSessionStore } from "../src/store.mjs";
+import { cleanStore, openSessionStore } from "../src/store.mjs";
 import { content, decodedProjection, sessionFor, workspaceFor } from "./helpers.mjs";
 
 function sessionFile(root, sessionId = "session") {
   const key = stableId("session", { sessionId }).slice("session_".length);
   return path.join(root, ".freshctx", "sessions", `${key}.json`);
+}
+
+function blobDirectory(root) {
+  return path.join(root, ".freshctx", "blobs", "sha256");
+}
+
+async function blobNames(root) {
+  return readdir(blobDirectory(root));
+}
+
+async function blobExists(root, revision) {
+  const names = await blobNames(root);
+  return names.includes(digestFromRevision(revision));
+}
+
+async function blobStoreBytes(root) {
+  const directory = blobDirectory(root);
+  let total = 0;
+  for (const name of await readdir(directory)) {
+    total += (await stat(path.join(directory, name))).size;
+  }
+  return total;
 }
 
 test("a partial read projects the current Tree-sitter symbol, never its historical body", async (t) => {
@@ -483,31 +505,91 @@ test("repeated identical prepares and commits do not rewrite full projections in
   assert.ok(Buffer.byteLength(persisted) < afterFirst + 20 * 4096, "compact plan records must not grow like copied projections");
 });
 
-test("a pending plan that is never committed is dropped on the next prepare or TTL", async (t) => {
+test("distinct identical request ids grow session JSON only by compact records", async (t) => {
+  const source = `${"x".repeat(60 * 1024)}\n`;
+  const root = await workspaceFor(t, { "a.py": source });
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
+  const first = await session.prepare({ requestId: "growth-0", resultIds: ["r"], budgetBytes: source.length + 4096 });
+  assert.equal((await session.commit({ planId: first.plan_id })).idempotent, false);
+  const afterFirst = Buffer.byteLength(await readFile(sessionFile(root), "utf8"));
+  const blobsAfterFirst = (await blobNames(root)).length;
+  const blobBytesAfterFirst = await blobStoreBytes(root);
+  const extra = 32;
+  for (let index = 1; index <= extra; index += 1) {
+    const plan = await session.prepare({ requestId: `growth-${index}`, resultIds: ["r"], budgetBytes: source.length + 4096 });
+    assert.equal(plan.projection_sha256, first.projection_sha256);
+    assert.equal((await session.commit({ planId: plan.plan_id })).idempotent, false);
+  }
+  const afterExtra = Buffer.byteLength(await readFile(sessionFile(root), "utf8"));
+  const perRecord = (afterExtra - afterFirst) / extra;
+  assert.ok(perRecord < 2048, `compact committed records must stay under 2 KiB each, got ${perRecord}`);
+  assert.equal((await blobNames(root)).length, blobsAfterFirst);
+  assert.equal(await blobStoreBytes(root), blobBytesAfterFirst);
+});
+
+test("prepare A then prepare B still allows commit A inside the pending bound", async (t) => {
   const source = "def top():\n    return 1\n";
   const root = await workspaceFor(t, { "a.py": source });
   const session = await sessionFor(t, root);
   await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
   const first = await session.prepare({ requestId: "pending-a", resultIds: ["r"], budgetBytes: 4096 });
-  assert.equal((await session.status()).counts.pending_plans, 1);
   const second = await session.prepare({ requestId: "pending-b", resultIds: ["r"], budgetBytes: 4096 });
-  assert.equal((await session.status()).counts.pending_plans, 1);
-  await assert.rejects(
-    () => session.commit({ planId: first.plan_id }),
-    (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
-  );
+  assert.equal((await session.status()).counts.pending_plans, 2);
+  assert.equal((await session.commit({ planId: first.plan_id })).idempotent, false);
   assert.equal((await session.commit({ planId: second.plan_id })).idempotent, false);
+});
 
-  const leaked = await session.prepare({ requestId: "pending-ttl", resultIds: ["r"], budgetBytes: 4096 });
-  const pending = session.store.state.pendingPlans["pending-ttl"];
-  pending.preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
-  assert.equal((await session.status()).counts.pending_plans, 0);
+test("pending plans keep the newest MAX_PENDING_PLANS by preparedAt", async (t) => {
+  const source = "def top():\n    return 1\n";
+  const root = await workspaceFor(t, { "a.py": source });
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
+  const plans = [];
+  const newest = Date.now();
+  for (let index = 0; index < MAX_PENDING_PLANS; index += 1) {
+    const plan = await session.prepare({ requestId: `bound-${index}`, resultIds: ["r"], budgetBytes: 4096 });
+    session.store.state.pendingPlans[`bound-${index}`].preparedAt = newest - (MAX_PENDING_PLANS - index) * 1_000;
+    plans.push(plan);
+  }
+  plans.push(await session.prepare({ requestId: `bound-${MAX_PENDING_PLANS}`, resultIds: ["r"], budgetBytes: 4096 }));
+  assert.equal((await session.status()).counts.pending_plans, MAX_PENDING_PLANS);
+  assert.equal(await blobExists(root, plans[0].projection_sha256), true);
   await assert.rejects(
-    () => session.commit({ planId: leaked.plan_id }),
+    () => session.commit({ planId: plans[0].plan_id }),
     (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
   );
-  const retried = await session.prepare({ requestId: "pending-ttl-retry", resultIds: ["r"], budgetBytes: 4096 });
+  assert.equal((await session.commit({ planId: plans[1].plan_id })).idempotent, false);
+  assert.equal((await session.commit({ planId: plans.at(-1).plan_id })).idempotent, false);
+});
+
+test("expired or evicted pending plans drop records and leave blobs until clean", async (t) => {
+  const alpha = "def alpha():\n    return 1\n";
+  const beta = "def beta():\n    return 2\n";
+  const root = await workspaceFor(t, { "a.py": alpha, "b.py": beta });
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "a", path: "a.py", content: content(alpha), range: null, turn: 1 });
+  await session.observe({ resultId: "b", path: "b.py", content: content(beta), range: null, turn: 2 });
+  const unique = await session.prepare({ requestId: "unique-ttl", resultIds: ["a"], budgetBytes: 4096 });
+  const sharedFirst = await session.prepare({ requestId: "shared-ttl-a", resultIds: ["b"], budgetBytes: 4096 });
+  const sharedSecond = await session.prepare({ requestId: "shared-ttl-b", resultIds: ["b"], budgetBytes: 4096 });
+  assert.equal(sharedFirst.projection_sha256, sharedSecond.projection_sha256);
+  assert.notEqual(unique.projection_sha256, sharedFirst.projection_sha256);
+  session.store.state.pendingPlans["unique-ttl"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
+  session.store.state.pendingPlans["shared-ttl-a"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
+  assert.equal((await session.status()).counts.pending_plans, 1);
+  assert.equal(await blobExists(root, unique.projection_sha256), true);
+  assert.equal(await blobExists(root, sharedFirst.projection_sha256), true);
+  assert.equal(await blobExists(root, revisionFor(alpha)), true);
+  await assert.rejects(
+    () => session.commit({ planId: unique.plan_id }),
+    (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
+  );
+  const retried = await session.prepare({ requestId: "pending-ttl-retry", resultIds: ["b"], budgetBytes: 4096 });
   assert.equal((await session.commit({ planId: retried.plan_id })).idempotent, false);
+  await session.store.close();
+  assert.equal(await cleanStore(await openWorkspace(root)), true);
+  assert.deepEqual(await blobNames(root), []);
 });
 
 test("prepare refreshes several symbols from one file without changing commit freshness", async (t) => {
