@@ -8,7 +8,7 @@ import { digestFromRevision, revisionFor, stableId } from "../src/hash.mjs";
 import { decodeProjectionUnits } from "../src/projection.mjs";
 import { FreshCtxSession, MAX_PENDING_PLANS, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
 import { openWorkspace } from "../src/workspace.mjs";
-import { openSessionStore } from "../src/store.mjs";
+import { cleanStore, openSessionStore } from "../src/store.mjs";
 import { content, decodedProjection, sessionFor, workspaceFor } from "./helpers.mjs";
 
 function sessionFile(root, sessionId = "session") {
@@ -554,6 +554,7 @@ test("pending plans keep the newest MAX_PENDING_PLANS by preparedAt", async (t) 
   }
   plans.push(await session.prepare({ requestId: `bound-${MAX_PENDING_PLANS}`, resultIds: ["r"], budgetBytes: 4096 }));
   assert.equal((await session.status()).counts.pending_plans, MAX_PENDING_PLANS);
+  assert.equal(await blobExists(root, plans[0].projection_sha256), true);
   await assert.rejects(
     () => session.commit({ planId: plans[0].plan_id }),
     (error) => error instanceof FreshCtxError && error.code === "unknown_plan",
@@ -562,7 +563,7 @@ test("pending plans keep the newest MAX_PENDING_PLANS by preparedAt", async (t) 
   assert.equal((await session.commit({ planId: plans.at(-1).plan_id })).idempotent, false);
 });
 
-test("expired pending cleanup drops unreferenced projection blobs and keeps shared ones", async (t) => {
+test("expired or evicted pending plans drop records and leave blobs until clean", async (t) => {
   const alpha = "def alpha():\n    return 1\n";
   const beta = "def beta():\n    return 2\n";
   const root = await workspaceFor(t, { "a.py": alpha, "b.py": beta });
@@ -574,11 +575,10 @@ test("expired pending cleanup drops unreferenced projection blobs and keeps shar
   const sharedSecond = await session.prepare({ requestId: "shared-ttl-b", resultIds: ["b"], budgetBytes: 4096 });
   assert.equal(sharedFirst.projection_sha256, sharedSecond.projection_sha256);
   assert.notEqual(unique.projection_sha256, sharedFirst.projection_sha256);
-  assert.equal(await blobExists(root, unique.projection_sha256), true);
   session.store.state.pendingPlans["unique-ttl"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
   session.store.state.pendingPlans["shared-ttl-a"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
   assert.equal((await session.status()).counts.pending_plans, 1);
-  assert.equal(await blobExists(root, unique.projection_sha256), false);
+  assert.equal(await blobExists(root, unique.projection_sha256), true);
   assert.equal(await blobExists(root, sharedFirst.projection_sha256), true);
   assert.equal(await blobExists(root, revisionFor(alpha)), true);
   await assert.rejects(
@@ -587,53 +587,9 @@ test("expired pending cleanup drops unreferenced projection blobs and keeps shar
   );
   const retried = await session.prepare({ requestId: "pending-ttl-retry", resultIds: ["b"], budgetBytes: 4096 });
   assert.equal((await session.commit({ planId: retried.plan_id })).idempotent, false);
-});
-
-test("expiring a pending plan does not delete blobs still referenced by another session", async (t) => {
-  const alpha = "def alpha():\n    return 1\n";
-  const beta = "def beta():\n    return 2\n";
-  const root = await workspaceFor(t, { "a.py": alpha, "b.py": beta });
-  const workspace = await openWorkspace(root);
-  const storeA = await openSessionStore(workspace, "session-a");
-  const storeB = await openSessionStore(workspace, "session-b");
-  t.after(async () => {
-    await storeA.close();
-    await storeB.close();
-  });
-  const sessionA = new FreshCtxSession({ workspace, store: storeA, sessionId: "session-a" });
-  const sessionB = new FreshCtxSession({ workspace, store: storeB, sessionId: "session-b" });
-
-  await sessionA.observe({ resultId: "a", path: "a.py", content: content(alpha), range: null, turn: 1 });
-  await sessionA.observe({ resultId: "b", path: "b.py", content: content(beta), range: null, turn: 2 });
-  await sessionB.observe({ resultId: "a", path: "a.py", content: content(alpha), range: null, turn: 1 });
-  await sessionB.observe({ resultId: "b", path: "b.py", content: content(beta), range: null, turn: 2 });
-  const pendingAlphaA = await sessionA.prepare({ requestId: "a-alpha", resultIds: ["a"], budgetBytes: 4096 });
-  const pendingBetaA = await sessionA.prepare({ requestId: "a-beta", resultIds: ["b"], budgetBytes: 4096 });
-  const committedAlphaB = await sessionB.prepare({ requestId: "b-alpha", resultIds: ["a"], budgetBytes: 4096 });
-  const pendingBetaB = await sessionB.prepare({ requestId: "b-beta", resultIds: ["b"], budgetBytes: 4096 });
-  assert.equal(pendingAlphaA.projection_sha256, committedAlphaB.projection_sha256);
-  assert.equal(pendingBetaA.projection_sha256, pendingBetaB.projection_sha256);
-  assert.notEqual(pendingAlphaA.projection_sha256, pendingBetaA.projection_sha256);
-  assert.equal((await sessionB.commit({ planId: committedAlphaB.plan_id })).idempotent, false);
-
-  storeA.state.pendingPlans["a-alpha"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
-  storeA.state.pendingPlans["a-beta"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
-  assert.equal((await sessionA.status()).counts.pending_plans, 0);
-  assert.equal(await blobExists(root, pendingAlphaA.projection_sha256), true);
-  assert.equal(await blobExists(root, pendingBetaA.projection_sha256), true);
-  assert.equal(await blobExists(root, revisionFor(alpha)), true);
-  assert.equal(await blobExists(root, revisionFor(beta)), true);
-  assert.deepEqual(
-    await sessionB.prepare({ requestId: "b-alpha", resultIds: ["a"], budgetBytes: 4096 }),
-    committedAlphaB,
-  );
-
-  storeB.state.pendingPlans["b-beta"].preparedAt = Date.now() - PENDING_PLAN_TTL_MS - 1;
-  assert.equal((await sessionB.status()).counts.pending_plans, 0);
-  assert.equal(await blobExists(root, pendingBetaA.projection_sha256), false);
-  assert.equal(await blobExists(root, pendingAlphaA.projection_sha256), true);
-  assert.equal(await blobExists(root, revisionFor(alpha)), true);
-  assert.equal(await blobExists(root, revisionFor(beta)), true);
+  await session.store.close();
+  assert.equal(await cleanStore(await openWorkspace(root)), true);
+  assert.deepEqual(await blobNames(root), []);
 });
 
 test("prepare refreshes several symbols from one file without changing commit freshness", async (t) => {

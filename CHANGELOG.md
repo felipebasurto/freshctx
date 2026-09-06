@@ -5,8 +5,8 @@
 - Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat
   `path:kind:N` as a Pi line offset. Bare integer headers fail closed.
 - Keep up to 16 pending plans per session so `commit A` still works after
-  `prepare B`. Evicted or expired pending projections are garbage-collected
-  when no live record in any workspace session references the blob.
+  `prepare B`. Orphan projection blobs stay until `freshctx clean`; online
+  expire/evict does not delete blobs while sessions are live.
 - Pin the Pi CI job to Node 22.19.0 to match the bridge engines floor.
 - JSONL writes waiting for drain terminate if the output stream closes.
 - Declare Node `>=22.19.0` for the Pi bridge to match its SDK engines.

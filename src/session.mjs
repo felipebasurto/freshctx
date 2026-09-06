@@ -205,59 +205,19 @@ class StoredPlan {
     return response;
   }
 
-  static projectionRevision(plan) {
-    return plan.response?.projection_sha256 ?? null;
-  }
-
-  static liveRevisions(state) {
-    const live = new Set();
-    for (const plan of Object.values(state.pendingPlans)) {
-      const revision = StoredPlan.projectionRevision(plan);
-      if (revision) live.add(revision);
-    }
-    for (const plan of Object.values(state.committedPlans)) {
-      const revision = StoredPlan.projectionRevision(plan);
-      if (revision) live.add(revision);
-    }
-    for (const unit of Object.values(state.units)) {
-      for (const revision of unit.revisions ?? []) live.add(revision);
-    }
-    for (const observation of Object.values(state.observations)) {
-      if (observation.observedRevision) live.add(observation.observedRevision);
-    }
-    return live;
-  }
-
-  static async liveRevisionsInStore(store) {
-    const live = StoredPlan.liveRevisions(store.state);
-    for (const state of await store.sessionStates()) {
-      for (const revision of StoredPlan.liveRevisions(state)) live.add(revision);
-    }
-    return live;
-  }
-
-  static async releaseUnreferenced(store, revisions) {
-    if (revisions.length === 0) return;
-    const live = await StoredPlan.liveRevisionsInStore(store);
-    for (const revision of new Set(revisions)) {
-      if (!revision || live.has(revision)) continue;
-      await store.deleteBlob(revision);
-    }
-  }
-
   static dropExpiredPending(state, now = Date.now()) {
-    const dropped = [];
+    let changed = false;
     for (const [requestId, plan] of Object.entries(state.pendingPlans)) {
       if (!Number.isSafeInteger(plan.preparedAt) || now - plan.preparedAt <= PENDING_PLAN_TTL_MS) continue;
-      dropped.push(StoredPlan.projectionRevision(plan));
       deleteRecordValue(state.pendingPlans, requestId);
+      changed = true;
     }
-    return dropped;
+    return changed;
   }
 
   static boundPending(state) {
     const entries = Object.entries(state.pendingPlans);
-    if (entries.length <= MAX_PENDING_PLANS) return [];
+    if (entries.length <= MAX_PENDING_PLANS) return;
     const ranked = entries
       .map(([requestId, plan], index) => ({ requestId, plan, index }))
       .sort((left, right) => {
@@ -265,12 +225,9 @@ class StoredPlan {
         if (byTime !== 0) return byTime;
         return left.index - right.index;
       });
-    const dropped = [];
-    for (const { requestId, plan } of ranked.slice(0, entries.length - MAX_PENDING_PLANS)) {
-      dropped.push(StoredPlan.projectionRevision(plan));
+    for (const { requestId } of ranked.slice(0, entries.length - MAX_PENDING_PLANS)) {
       deleteRecordValue(state.pendingPlans, requestId);
     }
-    return dropped;
   }
 }
 
@@ -451,11 +408,7 @@ export class FreshCtxSession {
 
   async prepare(request) {
     const fingerprint = planFingerprint(request);
-    const expired = StoredPlan.dropExpiredPending(this.store.state);
-    if (expired.length > 0) {
-      await this.store.save();
-      await StoredPlan.releaseUnreferenced(this.store, expired);
-    }
+    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
     const known = recordValue(this.store.state.pendingPlans, request.requestId)
       ?? recordValue(this.store.state.committedPlans, request.requestId);
     if (known) {
@@ -542,9 +495,8 @@ export class FreshCtxSession {
       references,
       preparedAt: Date.now(),
     });
-    const evicted = StoredPlan.boundPending(this.store.state);
+    StoredPlan.boundPending(this.store.state);
     await this.store.save();
-    await StoredPlan.releaseUnreferenced(this.store, evicted);
     return clone(response);
   }
 
@@ -562,14 +514,12 @@ export class FreshCtxSession {
         if (revisionFor(current.bytes) !== reference.sourceRevision) {
           deleteRecordValue(this.store.state.pendingPlans, requestId);
           await this.store.save();
-          await StoredPlan.releaseUnreferenced(this.store, [StoredPlan.projectionRevision(pending)]);
           fail("stale_plan", "a selected source file changed before commit", { path: reference.path });
         }
       } catch (error) {
         if (error instanceof FreshCtxError && error.code === "stale_plan") throw error;
         deleteRecordValue(this.store.state.pendingPlans, requestId);
         await this.store.save();
-        await StoredPlan.releaseUnreferenced(this.store, [StoredPlan.projectionRevision(pending)]);
         fail("stale_plan", "a selected source file cannot be revalidated", { path: reference.path, reason: reasonFor(error) });
       }
     }
@@ -600,11 +550,7 @@ export class FreshCtxSession {
   }
 
   async status() {
-    const expired = StoredPlan.dropExpiredPending(this.store.state);
-    if (expired.length > 0) {
-      await this.store.save();
-      await StoredPlan.releaseUnreferenced(this.store, expired);
-    }
+    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
     const state = this.store.state;
     return {
       healthy: true,
