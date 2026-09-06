@@ -109,6 +109,28 @@ test('dead or stalled child rejects promptly and remains closed', async t => {
   await assert.rejects(client.request('status'), /timed out/);
 });
 
+test('moved-symbol and tax-base projection headers are not Pi line offsets', async t => {
+  const { root, bridge } = await fixture(t);
+  const symbol = 'def tax_base(amount):\n    return amount * 2\n#\n';
+  assert.equal(Buffer.byteLength(symbol, 'utf8'), 46);
+  const tax = `${symbol}${'#'.repeat(76)}`;
+  assert.equal(Buffer.byteLength(tax, 'utf8'), 122);
+  await writeFile(join(root, 'tax.py'), tax);
+  const read = await bridge.read('read_1', { path: 'tax.py', offset: 1, limit: 2 });
+  assert.equal(read.content[0].text, 'def tax_base(amount):\n    return amount * 2');
+  await writeFile(join(root, 'tax.py'), `${'# inserted\n'.repeat(8)}${tax}`);
+  const rewritten = await bridge.rewrite(request(read.content[0].text));
+  const projection = rewritten.messages.at(-1).content;
+  const header = String(projection).slice(0, String(projection).indexOf('\n'));
+  assert.equal(/:\d+$/u.test(header), false, `projection header still looks like a line offset: ${header}`);
+  assert.match(header, /bytes$/u);
+  assert.match(header, /:symbol:/u);
+  assert.match(String(projection), /return amount \* 2/u);
+  assert.ok(46 > read.details.totalLines, `byte length 46 used as offset is past EOF (${read.details.totalLines} lines)`);
+  assert.ok(122 > read.details.totalLines, `byte length 122 used as offset is past EOF (${read.details.totalLines} lines)`);
+  assert.match(rewritten.messages[1].content, /^\[[0-9a-f]{8}\]$/u);
+});
+
 test('resume follows a moved symbol; compacted results stay inactive until read again', async t => {
   const { root, bridge } = await fixture(t);
   const read = await bridge.read('read_1', { path: 'price.py', offset: 4, limit: 2 });

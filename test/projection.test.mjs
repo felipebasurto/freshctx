@@ -31,9 +31,44 @@ test("length-prefixed frames keep payload that looks like another header", () =>
   assert.equal(decoded.contentBytes, Buffer.byteLength(content));
 });
 
+function lineOffsetCue(header) {
+  return /:\d+$/u.test(header);
+}
+
+test("Pi loop cue headers are not trailing bare integers (bytes, not line offsets)", () => {
+  const symbolBody = "def tax_base(amount):\n    return amount * 2\n#\n";
+  assert.equal(Buffer.byteLength(symbolBody, "utf8"), 46);
+  const fileBody = `${symbolBody}${"#".repeat(76)}`;
+  assert.equal(Buffer.byteLength(fileBody, "utf8"), 122);
+
+  const symbol = renderUnit(unit({
+    id: "moved",
+    path: "moved.py",
+    kind: "symbol",
+    content: symbolBody,
+  }));
+  const file = renderUnit(unit({
+    id: "tax",
+    path: "tax.py",
+    kind: "file",
+    content: fileBody,
+  }));
+  const symbolHeader = symbol.slice(0, symbol.indexOf("\n"));
+  const fileHeader = file.slice(0, file.indexOf("\n"));
+
+  assert.equal(lineOffsetCue(symbolHeader), false, `symbol header still looks like a line offset: ${symbolHeader}`);
+  assert.equal(lineOffsetCue(fileHeader), false, `file header still looks like a line offset: ${fileHeader}`);
+  assert.match(symbolHeader, /^moved\.py:symbol:46bytes$/u);
+  assert.match(fileHeader, /^tax\.py:122bytes$/u);
+  assert.deepEqual(decodeProjectionUnits(symbol + file).map((item) => item.contentBytes), [46, 122]);
+
+  assert.throws(() => decodeProjectionUnits("moved.py:symbol:46\n"), /content-bytes header/u);
+  assert.throws(() => decodeProjectionUnits("tax.py:122\n"), /content-bytes header/u);
+});
+
 test("paths that contain colons stay file units unless the last label is symbol or region", () => {
   const content = "ok\n";
-  const framed = `foo:bar.py:${Buffer.byteLength(content)}\n${content}`;
+  const framed = `foo:bar.py:${Buffer.byteLength(content)}bytes\n${content}`;
   const [decoded] = decodeProjectionUnits(framed);
   assert.equal(decoded.path, "foo:bar.py");
   assert.equal(decoded.kind, "file");
