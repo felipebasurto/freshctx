@@ -125,9 +125,10 @@ is inside that bound. A 17th distinct pending plan evicts the oldest.
 Pending plans also expire after 30 minutes on the next `prepare` or `status`.
 `commit` of a dropped or expired `plan_id` returns `unknown_plan`.
 Projections are stored as content-addressed SHA-256 blobs and shared across
-plans. Evicting or expiring a pending plan deletes its projection blob only
-when no remaining pending plan, committed plan, observation, or unit revision
-references it. Other archived blobs stay until `freshctx clean`.
+plans and sessions. Evicting or expiring a pending plan deletes its projection
+blob only when no remaining pending plan, committed plan, observation, or unit
+revision in any session under this workspace references it. Other archived
+blobs stay until `freshctx clean`.
 
 `recover` returns archived exact bytes by FreshCtx unit and SHA-256 revision.
 `status` exposes health and counters only; it never returns source bodies.

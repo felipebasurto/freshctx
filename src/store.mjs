@@ -411,10 +411,27 @@ export async function openSessionStore(workspace, sessionId) {
       throw error;
     }
   }
+  async function sessionStates() {
+    if (closed) fail("session_closed", "FreshCtx session is closed");
+    const directory = path.join(initialized.root, "sessions");
+    await requireRealDirectory(directory);
+    const states = [];
+    for (const name of await readdir(directory)) {
+      if (!name.endsWith(".json")) continue;
+      const parsed = await readJson(path.join(directory, name));
+      if (parsed === null) continue;
+      if (!isRecord(parsed) || typeof parsed.sessionId !== "string" || parsed.sessionId.length === 0) {
+        fail("state_corrupt", "FreshCtx session state does not match this session");
+      }
+      validateSessionState(parsed, parsed.sessionId);
+      states.push(parsed);
+    }
+    return states;
+  }
   async function close() {
     if (closed) return;
     closed = true;
     await releaseLock(lock);
   }
-  return { state, save, putBlob, getBlob, deleteBlob, close, root: initialized.root };
+  return { state, save, putBlob, getBlob, deleteBlob, sessionStates, close, root: initialized.root };
 }

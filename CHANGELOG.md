@@ -6,7 +6,8 @@
   `path:kind:N` as a Pi line offset. Bare integer headers fail closed.
 - Keep up to 16 pending plans per session so `commit A` still works after
   `prepare B`. Evicted or expired pending projections are garbage-collected
-  when no live record references the blob.
+  when no live record in any workspace session references the blob.
+- Pin the Pi CI job to Node 22.19.0 to match the bridge engines floor.
 - JSONL writes waiting for drain terminate if the output stream closes.
 - Declare Node `>=22.19.0` for the Pi bridge to match its SDK engines.
 

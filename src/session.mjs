@@ -228,9 +228,17 @@ class StoredPlan {
     return live;
   }
 
+  static async liveRevisionsInStore(store) {
+    const live = StoredPlan.liveRevisions(store.state);
+    for (const state of await store.sessionStates()) {
+      for (const revision of StoredPlan.liveRevisions(state)) live.add(revision);
+    }
+    return live;
+  }
+
   static async releaseUnreferenced(store, revisions) {
     if (revisions.length === 0) return;
-    const live = StoredPlan.liveRevisions(store.state);
+    const live = await StoredPlan.liveRevisionsInStore(store);
     for (const revision of new Set(revisions)) {
       if (!revision || live.has(revision)) continue;
       await store.deleteBlob(revision);
