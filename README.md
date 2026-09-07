@@ -65,18 +65,12 @@ mistaken for a directory to delete.
 
 ## Compatibility
 
-FreshCtx works with any bridge that can truthfully provide all four hooks:
-
-1. Rewrite a copy of the final provider request.
-2. Keep a stable native ID for each tool result still in that request.
-3. Insert one projection in a valid location in its own request format.
-4. Share the same workspace with the FreshCtx child process.
-
-The maintained reference integrations are [bridges/pi](bridges/pi) and
-[bridges/openhands](bridges/openhands). Other hosts need their own bridge
-implementing this contract. The core contains no vendor names or message
-schemas. A closed host that lacks any hook is incompatible; FreshCtx will
-reject it rather than pretending to provide freshness.
+A host needs a bridge that can rewrite a copy of the final provider request,
+keep stable tool-result ids, insert one projection, and share the workspace
+root. Per-host install steps are in [HARNESSES.md](HARNESSES.md). The
+maintained reference integrations are [bridges/pi](bridges/pi) and
+[bridges/openhands](bridges/openhands). A host without those hooks is
+incompatible. FreshCtx rejects it instead of faking freshness.
 
 ## Bridge contract
 

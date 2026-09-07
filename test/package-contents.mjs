@@ -27,10 +27,10 @@ assert.deepEqual(
 
 const forbidden = /^(test|adapters|bridges|bench|autoresearch|capture|papers|examples|scripts|docs)\//u;
 assert.equal(files.some((entry) => forbidden.test(entry)), false, `unexpected package file: ${files.find((entry) => forbidden.test(entry))}`);
-const allowedRoots = new Set(["bin", "src", "schema", "vendor", "LICENSE", "README.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md", "package.json"]);
+const allowedRoots = new Set(["bin", "src", "schema", "vendor", "LICENSE", "README.md", "HARNESSES.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md", "package.json"]);
 assert.ok(files.every(entry => allowedRoots.has(entry.split('/')[0])), 'product tarball contains a file outside the fixed allowlist');
 assert.equal(manifestPkg.private, true, 'npm publication remains disabled during private development');
-for (const required of ["bin/freshctx.mjs", "src/server.mjs", "schema/freshctx-v1.json", "vendor/treesitter/tree-sitter.wasm", "LICENSE", "README.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md"]) {
+for (const required of ["bin/freshctx.mjs", "src/server.mjs", "schema/freshctx-v1.json", "vendor/treesitter/tree-sitter.wasm", "LICENSE", "README.md", "HARNESSES.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md"]) {
   assert.ok(files.includes(required), `missing package file: ${required}`);
 }
 assert.equal(binEntry.mode, 0o755, "CLI binary must be executable in the npm tarball");
