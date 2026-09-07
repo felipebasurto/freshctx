@@ -1,7 +1,8 @@
 import { FreshCtxError, fail } from "./errors.mjs";
-import { compactUnitId, equalBytes, revisionFor, stableId } from "./hash.mjs";
+import { compactUnitId, equalBytes, revisionFor, sha256, stableId } from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
 import { VERSION } from "./protocol.mjs";
+import { anchorsFor, ANCHOR_BYTES, enclosingParsedUnit, relocateRegion } from "./relocate.mjs";
 import { parseUnits, supportedLanguages, uniqueUnitForRange } from "./treesitter.mjs";
 import { DEFAULT_MAX_SOURCE_BYTES, normalizeRelativePath, readStableText } from "./workspace.mjs";
 
@@ -39,8 +40,8 @@ function symbolUnitId(sourcePath, selector) {
   return compactUnitId({ kind: "symbol", path: sourcePath, selector });
 }
 
-function regionUnitId(sourcePath, startByte, endByte) {
-  return compactUnitId({ kind: "region", path: sourcePath, startByte, endByte });
+function regionUnitId(sourcePath, referentRevision, prefixAnchor, suffixAnchor, parentSelector = null) {
+  return compactUnitId({ kind: "region", path: sourcePath, revision: referentRevision, prefixAnchor, suffixAnchor, parentSelector });
 }
 
 function lineRangeForText(text) {
@@ -110,11 +111,21 @@ function resolvedFile({ sourcePath, observedAt, snapshot, resolution = "file" })
   };
 }
 
-function resolvedRegion({ sourcePath, observedAt, snapshot, range, resolution = "region" }) {
+function resolvedRegion({
+  sourcePath,
+  observedAt,
+  snapshot,
+  range,
+  resolution = "region",
+  parent = null,
+  fingerprint = null,
+}) {
   const bytes = snapshot.bytes.subarray(range.startByte, range.endByte);
   const revision = revisionFor(bytes);
+  const observedText = utf8Slice(snapshot.bytes, range.startByte, range.endByte);
+  const anchors = fingerprint ?? anchorsFor(snapshot.bytes, range.startByte, range.endByte);
   return {
-    id: regionUnitId(sourcePath, range.startByte, range.endByte),
+    id: regionUnitId(sourcePath, revision, anchors.prefixAnchor, anchors.suffixAnchor, parent?.selector ?? null),
     path: sourcePath,
     kind: "region",
     selector: null,
@@ -123,11 +134,25 @@ function resolvedRegion({ sourcePath, observedAt, snapshot, range, resolution = 
     resolution,
     sourceRevision: revisionFor(snapshot.bytes),
     revision,
+    referentRevision: revision,
     startByte: range.startByte,
     endByte: range.endByte,
     ...lineRangeForByteSpan(snapshot.bytes, range.startByte, range.endByte),
-    content: utf8Slice(snapshot.bytes, range.startByte, range.endByte),
+    content: observedText,
+    prefixAnchor: anchors.prefixAnchor,
+    suffixAnchor: anchors.suffixAnchor,
+    parentSelector: parent?.selector ?? null,
+    observedLength: bytes.length,
+    ...(parent
+      ? { relativeStart: range.startByte - parent.startByte, relativeEnd: range.endByte - parent.startByte }
+      : {}),
   };
+}
+
+/** Smallest parsed symbol fully containing the span; null when unparsed/ambiguous. */
+function parentForRange(parsed, startByte, endByte) {
+  if (!parsed || parsed.status !== "ok") return null;
+  return enclosingParsedUnit(parsed.units, startByte, endByte);
 }
 
 function resolvedSymbol({ sourcePath, observedAt, snapshot, parsed }) {
@@ -158,8 +183,21 @@ function persistable(unit) {
   return stored;
 }
 
+export const SELECTION_GRANULARITY_REGION = "region";
+export const SELECTION_GRANULARITY_FILE = "file";
+
+function normalizeGranularity(value) {
+  if (value === undefined) return SELECTION_GRANULARITY_REGION;
+  if (value === SELECTION_GRANULARITY_REGION || value === SELECTION_GRANULARITY_FILE) return value;
+  fail("invalid_request", "selection_granularity must be region or file");
+}
+
 function planFingerprint(request) {
-  return JSON.stringify({ resultIds: [...request.resultIds].sort(), budgetBytes: request.budgetBytes });
+  return JSON.stringify({
+    resultIds: [...request.resultIds].sort(),
+    budgetBytes: request.budgetBytes,
+    granularity: normalizeGranularity(request.granularity),
+  });
 }
 
 export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
@@ -275,8 +313,17 @@ export class FreshCtxSession {
       if (rangeMatchesCurrent) {
         const resolved = await uniqueUnitForRange({ path: sourcePath, text: snapshot.text, range: request.range });
         if (resolved.unit) unit = resolvedSymbol({ sourcePath, observedAt, snapshot, parsed: resolved.unit });
-        else if (resolved.status === "ok") {
-          unit = resolvedRegion({ sourcePath, observedAt, snapshot, range: request.range });
+        else if (resolved.status === "ok" || resolved.status === "ambiguous") {
+          // Caller-granularity regions for spans inside a parseable file
+          // that fall outside every symbol. These carry referent anchors so
+          // byte shifts relocate instead of drift. Unsupported and broken
+          // files keep the whole-file fallback below.
+          const parent = parentForRange(
+            resolved.status === "ok" ? resolved : { status: "ok", units: [] },
+            request.range.startByte,
+            request.range.endByte,
+          );
+          unit = resolvedRegion({ sourcePath, observedAt, snapshot, range: request.range, parent });
         }
       }
       if (!unit) unit = resolvedFile({ sourcePath, observedAt, snapshot, resolution: request.range ? "file-fallback" : "file" });
@@ -339,26 +386,54 @@ export class FreshCtxSession {
     return { ...file, id: unit.id };
   }
 
-  async currentRegion(unit, snapshot, observedAt) {
-    const startByte = unit.startByte;
-    const endByte = unit.endByte;
-    if (!Number.isInteger(startByte) || !Number.isInteger(endByte) || startByte < 0 || endByte <= startByte || endByte > snapshot.bytes.length) {
+  async currentRegion(unit, snapshot, observedAt, parsed = null) {
+    const referentBytes = await this.store.getBlob(unit.referentRevision ?? "");
+    if (!referentBytes) {
       return unresolvedUnit({
         id: unit.id,
         sourcePath: unit.path,
         kind: "region",
         observedAt,
-        reason: "range_unresolved",
+        reason: "unknown_revision",
+      });
+    }
+    const outcome = relocateRegion({
+      snapshotBytes: snapshot.bytes,
+      parsedUnits: parsed?.status === "ok" ? parsed.units : [],
+      parsedOk: parsed?.status === "ok",
+      referentBytes,
+      prefixAnchor: unit.prefixAnchor ?? "",
+      suffixAnchor: unit.suffixAnchor ?? "",
+      parentSelector: unit.parentSelector ?? null,
+      relStart: unit.relativeStart ?? null,
+      relEnd: unit.relativeEnd ?? null,
+      prevStart: unit.startByte,
+      prevEnd: unit.endByte,
+    });
+    if (outcome.status === "ambiguous" || outcome.status === "invalidated") {
+      return unresolvedUnit({
+        id: unit.id,
+        sourcePath: unit.path,
+        kind: "region",
+        observedAt,
+        reason: outcome.status === "ambiguous" ? "ambiguous" : "referent_missing",
       });
     }
     try {
+      const parent = parsed?.status === "ok"
+        ? parentForRange(parsed, outcome.startByte, outcome.endByte)
+        : null;
       const candidate = resolvedRegion({
         sourcePath: unit.path,
         observedAt,
         snapshot,
-        range: { startByte, endByte },
+        range: { startByte: outcome.startByte, endByte: outcome.endByte },
+        parent,
+        fingerprint: { prefixAnchor: unit.prefixAnchor, suffixAnchor: unit.suffixAnchor },
       });
       candidate.id = unit.id;
+      candidate.relocation = outcome.status;
+      candidate.previousRange = { startByte: unit.startByte, endByte: unit.endByte };
       await this.updateStoredUnit(candidate);
       return candidate;
     } catch {
@@ -392,7 +467,8 @@ export class FreshCtxSession {
       return candidate;
     }
     if (unit.kind === "region") {
-      return this.currentRegion(unit, snapshot, observedAt);
+      const parsed = await PrepareSourceCache.parsed(cache, unit.path);
+      return this.currentRegion(unit, snapshot, observedAt, parsed);
     }
     const parsed = await PrepareSourceCache.parsed(cache, unit.path);
     const matches = parsed.status === "ok"
@@ -407,6 +483,7 @@ export class FreshCtxSession {
   }
 
   async prepare(request) {
+    const granularity = normalizeGranularity(request.granularity);
     const fingerprint = planFingerprint(request);
     if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
     const known = recordValue(this.store.state.pendingPlans, request.requestId)
@@ -451,11 +528,36 @@ export class FreshCtxSession {
         }
         continue;
       }
+      // Whole-file control: same relevant file set, file granularity. Region
+      // and symbol candidates widen to the synchronized current whole file;
+      // the candidate keeps its unit id so replacements/markers are unchanged.
+      // NOTE: PrepareSourceCache.snapshot takes (cache, workspace, path).
+      if (granularity === SELECTION_GRANULARITY_FILE && candidate.kind !== "file") {
+        const filePath = candidate.path ?? original.path;
+        const snapshot = await PrepareSourceCache.snapshot(refresh, this.workspace, filePath);
+        candidate = {
+          ...resolvedFile({ sourcePath: filePath, observedAt: observation.observedAt, snapshot, resolution: "file" }),
+          id: candidate.id ?? original.id,
+        };
+      }
       candidates.push(candidate);
     }
     const projection = buildProjection(candidates, request.budgetBytes);
+    const counterfactual = granularity === SELECTION_GRANULARITY_REGION
+      ? await this.wholeFileCounterfactual(refresh, projection.selected)
+      : null;
     const selectedIds = new Set(projection.selected.map((unit) => unit.id));
     const omittedReasons = new Map(projection.omitted.map((item) => [item.unitId, item.reason]));
+    const unitStates = new Map(
+      projection.selected.map((unit) => [
+        unit.id,
+        {
+          status: unit.kind === "region" ? (unit.relocation ?? "stable") : unit.resolution === "file-fallback" ? "updated" : "stable",
+          previousRange: unit.previousRange ?? null,
+          currentRange: { startByte: unit.startByte, endByte: unit.endByte },
+        },
+      ]),
+    );
     const replacements = active.map((observation) => {
       const unit = recordValue(this.store.state.units, observation.unitId) ?? { id: observation.unitId, path: observation.path };
       const candidate = refreshed.get(observation.unitId);
@@ -487,6 +589,9 @@ export class FreshCtxSession {
       selected: projection.selected.map((unit) => unit.id),
       omitted: projection.omitted,
       unresolved,
+      unit_states: Object.fromEntries(unitStates),
+      selection_granularity: granularity,
+      ...(counterfactual ? { whole_file_equivalent: counterfactual } : {}),
     };
     setRecordValue(this.store.state.pendingPlans, request.requestId, {
       planId,
@@ -498,6 +603,26 @@ export class FreshCtxSession {
     StoredPlan.boundPending(this.store.state);
     await this.store.save();
     return clone(response);
+  }
+
+  /**
+   * Structural counterfactual for region mode: the synchronized whole-file
+   * bytes of every distinct selected file, measured but never injected. Uses
+   * the same per-prepare snapshots as the projection, so the comparison is
+   * against current disk state, not history.
+   */
+  async wholeFileCounterfactual(cache, selected) {
+    const seen = new Map();
+    for (const unit of selected) {
+      if (seen.has(unit.path)) continue;
+      const snapshot = await PrepareSourceCache.snapshot(cache, this.workspace, unit.path);
+      seen.set(unit.path, snapshot.bytes.length);
+    }
+    const files = [...seen.entries()]
+      .map(([filePath, bytes]) => ({ path: filePath, bytes }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const wholeFileBytes = files.reduce((total, file) => total + file.bytes, 0);
+    return { files, whole_file_bytes: wholeFileBytes };
   }
 
   async commit(request) {
