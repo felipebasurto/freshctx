@@ -6,11 +6,11 @@ Tested with `@earendil-works/pi-coding-agent@0.85.0`, Node ≥22.19.0, and Pi's
 text reader, speaks `freshctx/1` to a persistent local child, and transforms a
 copy of the final Chat Completions request. It does not modify saved Pi history.
 
-## Private checkout setup
+## Checkout setup
 
-Development lives here in the private product repository. The former
+Development lives in this product repository. The former
 freshctx-pi repository and v0.1.0 tag are historical snapshots. npm publication
-is disabled. With repository access, run from the product checkout:
+is disabled. From a checkout:
 
 ```sh
 npm ci --prefix bridges/pi
@@ -91,9 +91,9 @@ is no longer needed. Read the product [security policy](https://github.com/felip
 
 Tests cover real Pi HTTP serialization and rejected-request cancellation, Unicode/CRLF ranges, later symbol
 reads, duplicate IDs, altered results, deleted files, a zero-byte budget,
-symlinks, traversal, stale commits, resume, and child timeouts. Scores from
-[freshctx-bench](https://github.com/felipebasurto/freshctx-bench) belong to its
-frozen fixtures and are not scores for this Pi integration.
+symlinks, traversal, stale commits, resume, and child timeouts. Frozen bench
+scores belong to a separate private repository and are not scores for this
+Pi integration.
 
 ## Product PCR pointer
 
@@ -101,8 +101,7 @@ Product PCR `0001` (2026-09-06): projection frames use `Nbytes` so a trailing
 integer cannot be read as a Pi line offset. See [docs/pcr/0001-projection-byte-length-cue.md](../../docs/pcr/0001-projection-byte-length-cue.md)
 and [docs/pcr/INDEX.md](../../docs/pcr/INDEX.md).
 
-Living-suite PCR numbers stay in the research repository
-`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs into this
-package.
+Living-suite PCR numbers stay in a separate private research repository.
+Do not copy those labs into this package.
 
 MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).

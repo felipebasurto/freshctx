@@ -3,8 +3,9 @@
 FreshCtx is a local Node.js sidecar. A small bridge in the host talks JSONL to
 `freshctx serve --stdio`. The host never imports FreshCtx internals.
 
-This package ships the sidecar only. It does not ship Pi, Hermes, or OpenCode
-bridges. Until a bridge exists for your host, installing the CLI does nothing
+This package ships the sidecar and maintained bridges for Pi and OpenHands
+under `bridges/`. It does not ship Hermes, Oh My Pi, or OpenCode bridges.
+Until a bridge exists for your host, installing the CLI does nothing
 inside that agent.
 
 ## Install the sidecar
@@ -20,12 +21,8 @@ npm link
 freshctx doctor
 ```
 
-When the package is on npm:
-
-```sh
-npm install -g freshctx
-freshctx doctor
-```
+npm publication is disabled. Install from this checkout (`npm install -g .`
+or `npm link`), not from the registry.
 
 `doctor` must print the vendored languages: python, javascript, typescript, tsx,
 go, rust.
@@ -85,16 +82,16 @@ stored session.
 
 ### Hosts with a public request-copy hook
 
-These hosts document request-copy rewrite. This repo does not publish a bridge
-for any of them. The load commands below are the host's path once you have a
-bridge file.
+These hosts document request-copy rewrite. This repo ships bridges for Pi
+and OpenHands. The other rows are host load paths once you write a bridge.
 
-| Host | Host load command (after bridge exists) | What the bridge uses |
+| Host | Host load command | What the bridge uses |
 | --- | --- | --- |
-| Pi | `pi -e /path/to/your-bridge.ts` | `tool_result` for observe, `context` to replace the request-copy `messages`, optional `before_provider_request`. `toolCallId` is the `result_id`. Extension path: `~/.pi/agent/extensions/` or `.pi/extensions/`. Docs: [Extensions](https://pi.dev/docs/latest/extensions). |
-| Oh My Pi | `omp --extension /path/to/your-bridge.ts` | Same extension family as Pi. `context` rewrites the LLM-bound copy, not the session file. Pin a host version in the bridge. |
-| Hermes Agent | Set `context.engine: freshctx` in `config.yaml` | Only `select_context()` replaces the per-request message list. `pre_llm_call` only appends. Map OpenAI `tool_call_id` to `result_id`. Fail open with `None`. Only one context engine is active. Docs: [Context Engine plugins](https://hermes-agent.nousresearch.com/docs/developer-guide/context-engine-plugin). |
-| OpenCode | Register a plugin in OpenCode's plugin config | Hook `experimental.chat.messages.transform` rewrites the list sent to the model. Observe reads with `tool.execute.after`. Mutate `output.messages` in place with `splice`. Assigning `output.messages = …` is ignored. The transform API is experimental. |
+| Pi | `pi -e /path/to/freshctx/bridges/pi/extension.js` (this repo: [bridges/pi](bridges/pi)) | `tool_result` for observe, `context` to replace the request-copy `messages`, optional `before_provider_request`. `toolCallId` is the `result_id`. Extension path: `~/.pi/agent/extensions/` or `.pi/extensions/`. Docs: [Extensions](https://pi.dev/docs/latest/extensions). The `fresh` fork uses the same extension path with native FreshCtx instead of this file. |
+| OpenHands | See [bridges/openhands](bridges/openhands) | Rewrites the already-condensed Chat Completions-shaped copy. Compose order `condense_then_freshctx`. |
+| Oh My Pi | `omp --extension /path/to/your-bridge.ts` (no bridge in this repo) | Same extension family as Pi. `context` rewrites the LLM-bound copy, not the session file. Pin a host version in the bridge. |
+| Hermes Agent | Set `context.engine: freshctx` in `config.yaml` (no bridge in this repo) | Only `select_context()` replaces the per-request message list. `pre_llm_call` only appends. Map OpenAI `tool_call_id` to `result_id`. Fail open with `None`. Only one context engine is active. Docs: [Context Engine plugins](https://hermes-agent.nousresearch.com/docs/developer-guide/context-engine-plugin). |
+| OpenCode | Register a plugin in OpenCode's plugin config (no bridge in this repo) | Hook `experimental.chat.messages.transform` rewrites the list sent to the model. Observe reads with `tool.execute.after`. Mutate `output.messages` in place with `splice`. Assigning `output.messages = …` is ignored. The transform API is experimental. |
 
 The bridge spawns `freshctx serve --stdio --root <workspace>`, not the host.
 

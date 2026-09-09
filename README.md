@@ -1,7 +1,9 @@
 # FreshCtx
 
-Private development prototype. npm remains unpublished. Existing tags record
-historical snapshots, not an active public launch. See [development policy](AGENTS.md).
+Source is public. npm remains unpublished (`private: true`). Existing tags
+record historical snapshots, not an npm release. See [development policy](AGENTS.md).
+
+The companion coding-agent harness is [`fresh`](https://github.com/felipebasurto/fresh).
 
 FreshCtx keeps code context current without knowing anything about a model,
 provider, or agent harness. It is a local Node 22+ process that exposes a small
@@ -9,17 +11,15 @@ JSONL protocol over stdio. A harness-specific bridge owns its native request
 format; FreshCtx owns safe workspace resolution, Tree-sitter symbol identity,
 exact revision storage, selection, and projection.
 
-Measured with-versus-without scores live in
-[freshctx-bench](https://github.com/felipebasurto/freshctx-bench).
-That repository is not this package. FreshCtx is an add-on, not a compact
-replacement. Those figures are not a SWE
-pass rate. The maintained host bridges are [Pi](bridges/pi) (Chat Completions) and
+FreshCtx is an add-on, not a compact replacement. Frozen with-versus-without
+scores live in a separate private bench repository; they are not a SWE pass
+rate. The maintained host bridges are [Pi](bridges/pi) (Chat Completions) and
 [OpenHands](bridges/openhands) (real agent plus summarizing condenser). See
 each bridge's compatibility limits and local verification fixture before use.
 
-## Private development
+## Development
 
-Requires repository access and Node 22+. From an authorized checkout:
+Requires Node 22+. From a checkout:
 
 ```sh
 node bin/freshctx.mjs doctor

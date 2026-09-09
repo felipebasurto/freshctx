@@ -14,13 +14,12 @@ compatible.
 
 ## Migration and publication
 
-Pi was imported from freshctx-pi commit
-`3ac73c21710199d96be0f2ea2021b59c8de41aa0`. The old private repository and its
-v0.1.0 tag remain as historical provenance. Development continues here.
-No tags were moved or deleted. Both package manifests prevent npm publication.
-Private collaborators install from a checkout; there is no public install promise.
+Pi was imported from a historical freshctx-pi snapshot
+(`3ac73c21710199d96be0f2ea2021b59c8de41aa0`). That snapshot repository stays
+private. Development continues here. No tags were moved or deleted. Both
+package manifests keep `private: true`; install from this checkout.
 
-If publication is later authorized, independently built bridge packages can be
+If an npm release is later authorized, independently built bridge packages can be
 released from these directories with exact product version dependencies. Their
 development `file:` dependencies must first be replaced and the resulting
 tarballs tested. This layout does not require one GitHub repository per host.
@@ -47,4 +46,4 @@ condenser). Its bridge rewrites the already-condensed model-bound copy so the
 current projection stays eligible. That host test is request-level; it is not
 an LLM evaluation. Broader claims need repeated real-provider task results and
 a documented comparison baseline; the deterministic transport demos alone
-cannot justify a public launch.
+are not a product launch.

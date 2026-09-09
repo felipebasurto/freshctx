@@ -7,8 +7,8 @@ transforms a copy of the final Chat Completions-shaped message list.
 
 OpenHands is the preferred live harness: a real agent plus
 `LLMSummarizingCondenser`. This package does not pin or vendor OpenHands.
-Scores, SWE-bench matrices, and dollar figures belong in
-[freshctx-bench](https://github.com/felipebasurto/freshctx-bench), not here.
+Scores, SWE-bench matrices, and dollar figures belong in a separate private
+bench repository, not here.
 
 ## Compose order
 
@@ -29,7 +29,7 @@ on in the sidecar; this bridge does not replace it.
 Do not run another final-request rewriter after this one. Do not persist the
 rewritten copy back into the event log.
 
-## Private checkout setup
+## Checkout setup
 
 npm publication is disabled. From the product checkout:
 
@@ -132,8 +132,7 @@ Product PCR `openhands-0001` (2026-09-05): first OpenHands request-rewriting
 host under `bridges/openhands`. Compose order is `condense_then_freshctx`.
 Fail-closed.
 
-Living-suite PCR numbers stay in the research repository
-`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs into this
-package.
+Living-suite PCR numbers stay in a separate private research repository.
+Do not copy those labs into this package.
 
 MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).

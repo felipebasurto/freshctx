@@ -1,8 +1,7 @@
 # Product PCR index
 
-Living-suite PCR numbers stay in
-[freshctx-research](https://github.com/felipebasurto/freshctx-research)
-`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs here.
+Living-suite PCR numbers stay in a separate private research repository.
+Do not copy those labs here.
 
 These notes are product-side Public Change Records for this repository only.
 They are not shipped in the npm tarball.
