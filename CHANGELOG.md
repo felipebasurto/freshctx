@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Document this repository as public source. npm packages stay `private: true`.
+- Compact public docs. The product is the sidecar plus Pi and OpenHands
+  bridges; there is no companion harness. A rejected plan must cancel
+  dispatch (HARNESSES no longer says fail-open).
 - Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat
   `path:kind:N` as a Pi line offset. Bare integer headers fail closed.
 - Keep up to 16 pending plans per session so `commit A` still works after

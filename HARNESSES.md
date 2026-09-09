@@ -1,126 +1,45 @@
 # How to connect FreshCtx to an agent host
 
-FreshCtx is a local Node.js sidecar. A small bridge in the host talks JSONL to
+FreshCtx is a local Node sidecar. A bridge in the host talks JSONL to
 `freshctx serve --stdio`. The host never imports FreshCtx internals.
 
-This package ships the sidecar and maintained bridges for Pi and OpenHands
-under `bridges/`. It does not ship Hermes, Oh My Pi, or OpenCode bridges.
-Until a bridge exists for your host, installing the CLI does nothing
-inside that agent.
+This repo ships the sidecar plus [Pi](bridges/pi) and
+[OpenHands](bridges/openhands) bridges. It does not ship Hermes, Oh My Pi, or
+OpenCode. Install: `npm install -g .` from this checkout (not npm).
 
-## Install the sidecar
-
-You need Node.js 22 or newer.
-
-From this repository:
-
-```sh
-cd /path/to/freshctx
-npm test
-npm link
-freshctx doctor
-```
-
-npm publication is disabled. Install from this checkout (`npm install -g .`
-or `npm link`), not from the registry.
-
-`doctor` must print the vendored languages: python, javascript, typescript, tsx,
-go, rust.
-
-In each workspace the agent will edit:
-
-```sh
-cd /path/to/workspace
-freshctx init
-```
-
-That creates `.freshctx/` and, when Git metadata lives inside the workspace,
-adds `/.freshctx/` only to `.git/info/exclude`. It never edits `.gitignore`.
-
-The bridge starts one child per host session:
-
-```sh
-freshctx serve --stdio --root /path/to/workspace
-```
-
-`stdout` is JSONL. Diagnostics go to `stderr`. A Node bridge can use
-`src/client.mjs` instead of speaking JSONL by hand. Full protocol details are
-in [README.md](README.md) and [`schema/freshctx-v1.json`](schema/freshctx-v1.json).
-
-## Wire a bridge
-
-Before the host can use FreshCtx, you need a bridge that spawns the sidecar and
-runs the FreshCtx loop. `hello` is rejected unless all four capabilities are
-true:
+`hello` requires all four capabilities:
 
 | Capability | Meaning |
 | --- | --- |
 | `request_rewrite` | Rewrite a copy of the final provider request |
 | `stable_result_identity` | Stable native id for each tool result still in that copy |
-| `projection_insertion` | Insert one live projection in a valid place in the host format |
+| `projection_insertion` | Insert one live projection in a valid host slot |
 | `shared_workspace` | Same filesystem root as `--root` |
 
-Loop:
+Loop: `observe` after each exact code read → `prepare` before the model call
+→ verify hashes and rewrite a copy → `commit` → send. If any step fails,
+**discard the plan and cancel dispatch**. Do not send the original request.
+Do not persist the rewritten copy into session history.
 
-1. After a successful code read, call `observe` with `result_id`, relative
-   `path`, UTF-8 bytes as base64, and an optional byte `range`.
-2. Before the model call, call `prepare` with those `result_id`s and
-   `budget_bytes`.
-3. Verify every `expected_sha256`, replace only those results with the given
-   markers, insert the decoded projection, and validate the host request.
-4. If any step fails, discard the plan and send the original request.
-5. After a successful apply, call `commit`. If the workspace changed, prepare
-   again or fail open.
+## Hosts with a request-copy hook
 
-Do not persist the rewritten request. Do not emulate a host that cannot rewrite.
-
-## Find your host
-
-Check whether your host exposes a public request-copy rewrite hook. That hook
-lets a bridge replace the assembled provider request without changing the
-stored session.
-
-### Hosts with a public request-copy hook
-
-These hosts document request-copy rewrite. This repo ships bridges for Pi
-and OpenHands. The other rows are host load paths once you write a bridge.
-
-| Host | Host load command | What the bridge uses |
+| Host | Load | Notes |
 | --- | --- | --- |
-| Pi | `pi -e /path/to/freshctx/bridges/pi/extension.js` (this repo: [bridges/pi](bridges/pi)) | `tool_result` for observe, `context` to replace the request-copy `messages`, optional `before_provider_request`. `toolCallId` is the `result_id`. Extension path: `~/.pi/agent/extensions/` or `.pi/extensions/`. Docs: [Extensions](https://pi.dev/docs/latest/extensions). The `fresh` fork uses the same extension path with native FreshCtx instead of this file. |
-| OpenHands | See [bridges/openhands](bridges/openhands) | Rewrites the already-condensed Chat Completions-shaped copy. Compose order `condense_then_freshctx`. |
-| Oh My Pi | `omp --extension /path/to/your-bridge.ts` (no bridge in this repo) | Same extension family as Pi. `context` rewrites the LLM-bound copy, not the session file. Pin a host version in the bridge. |
-| Hermes Agent | Set `context.engine: freshctx` in `config.yaml` (no bridge in this repo) | Only `select_context()` replaces the per-request message list. `pre_llm_call` only appends. Map OpenAI `tool_call_id` to `result_id`. Fail open with `None`. Only one context engine is active. Docs: [Context Engine plugins](https://hermes-agent.nousresearch.com/docs/developer-guide/context-engine-plugin). |
-| OpenCode | Register a plugin in OpenCode's plugin config (no bridge in this repo) | Hook `experimental.chat.messages.transform` rewrites the list sent to the model. Observe reads with `tool.execute.after`. Mutate `output.messages` in place with `splice`. Assigning `output.messages = …` is ignored. The transform API is experimental. |
+| Pi | `pi -e /path/to/freshctx/bridges/pi/extension.js` | [bridges/pi](bridges/pi). `toolCallId` is `result_id`. `openai-completions` only. |
+| OpenHands | [bridges/openhands](bridges/openhands) | Rewrites the already-condensed copy (`condense_then_freshctx`). |
+| Oh My Pi | `omp --extension …` | Same family as Pi. No bridge in this repo. |
+| Hermes | `context.engine` in `config.yaml` | `select_context()` only. No bridge in this repo. |
+| OpenCode | plugin `experimental.chat.messages.transform` | Mutate `output.messages` in place. No bridge in this repo. |
 
-The bridge spawns `freshctx serve --stdio --root <workspace>`, not the host.
+## Hosts without a request-copy hook
 
-### Hosts without a request-copy hook
+Inject, gate, rewrite stored tool output, or MCP: not FreshCtx.
 
-These products do not publish a way to replace the assembled provider request.
-Hooks that inject `additionalContext`, rewrite a single tool's persisted output,
-or block a run are not FreshCtx. MCP cannot remove an old read from a host
-transcript.
-
-| Host | Why FreshCtx cannot install |
+| Host | Why not |
 | --- | --- |
-| Cursor | Public hooks inject or gate. No rewrite of the final request copy. |
-| Claude Code | Hooks rewrite stored tool output only. No ephemeral request rewrite. |
-| Codex CLI | Hooks add developer context only. No message list rewrite. |
-| Other closed IDEs and hosted agents | No documented request-copy hook. |
+| Cursor | Inject/gate only |
+| Claude Code | Stored tool output only |
+| Codex CLI | Extra developer context only |
 
-If a vendor later exposes the four capabilities, the install path is the sidecar
-plus a new bridge package. That is not a change to this core.
-
-## Verify the session
-
-`freshctx doctor` only checks that the vendored Tree-sitter WASM files load. It
-does not open a workspace and it does not talk to a running sidecar.
-
-The live check is `status` after `hello`. `status` never returns source bodies.
-A working session shows observations and units increasing after reads, and a
-`prepare` plan whose projection decodes to `<freshctx-unit>` frames with current
-file bytes.
-
-If the host cannot rewrite the request, `hello` must fail with
-`host_incompatible`. Do not hide that behind a fake supported install.
+`freshctx doctor` only checks Tree-sitter WASM. The live check is `status`
+after `hello`.

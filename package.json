@@ -1,7 +1,7 @@
 {
   "name": "freshctx",
   "version": "0.1.0",
-  "description": "Fresh code context over a universal JSONL bridge contract.",
+  "description": "Local sidecar that keeps coding-agent context current over JSONL.",
   "license": "MIT",
   "type": "module",
   "bin": {

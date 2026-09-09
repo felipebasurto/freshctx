@@ -1,11 +1,7 @@
 # Product PCR index
 
-Living-suite PCR numbers stay in a separate private research repository.
-Do not copy those labs here.
+Product-side change records for this repository. Not in the npm tarball.
 
-These notes are product-side Public Change Records for this repository only.
-They are not shipped in the npm tarball.
-
-| PCR | Date (UTC) | Title | Labels | Decision |
-|---|---|---|---|---|
-| [0001](0001-projection-byte-length-cue.md) | 2026-09-06 | Label projection lengths as UTF-8 bytes | `synthetic`; `pi-fresh`; `measurement` | review |
+| PCR | Date (UTC) | Title |
+|---|---|---|
+| [0001](0001-projection-byte-length-cue.md) | 2026-09-06 | Label projection lengths as UTF-8 bytes |
