@@ -1,5 +1,3 @@
-import { rankActiveUnits, UnitSelection } from "./selection.mjs";
-
 function projectionBytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
@@ -66,6 +64,35 @@ function compareRenderOrder(left, right) {
   return left.id.localeCompare(right.id);
 }
 
+function recency(left, right) {
+  return right.observedAt - left.observedAt || left.id.localeCompare(right.id);
+}
+
+function unitsOverlap(left, right) {
+  if (left.path !== right.path) return false;
+  if (left.kind === "file" || right.kind === "file") return true;
+  return left.startByte < right.endByte && right.startByte < left.endByte;
+}
+
+function rankActiveUnits(units) {
+  const byId = new Map();
+  for (const unit of units) {
+    const existing = byId.get(unit.id);
+    if (!existing || recency(unit, existing) < 0) byId.set(unit.id, unit);
+  }
+  const unique = [...byId.values()].sort(recency);
+  const candidates = [];
+  const omitted = [];
+  for (const unit of unique) {
+    if (unit.state !== "resolved") {
+      omitted.push({ unitId: unit.id, reason: unit.reason ?? "unresolved" });
+      continue;
+    }
+    candidates.push(unit);
+  }
+  return { candidates, omitted };
+}
+
 export function buildProjection(units, budgetBytes) {
   if (!Number.isSafeInteger(budgetBytes) || budgetBytes < 0) {
     throw new TypeError("budgetBytes must be a non-negative safe integer");
@@ -83,7 +110,7 @@ export function buildProjection(units, budgetBytes) {
   }
   let selectedBytes = 0;
   for (const unit of ranked.candidates) {
-    if (selected.some((admitted) => UnitSelection.overlap(admitted, unit))) {
+    if (selected.some((admitted) => unitsOverlap(admitted, unit))) {
       omitted.push({ unitId: unit.id, reason: "overlap" });
       continue;
     }

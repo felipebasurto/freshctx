@@ -60,3 +60,64 @@ test("CLI initializes, serves JSONL over stdio, and cleans one workspace state",
   assert.equal(cleaned.code, 0);
   assert.equal(JSON.parse(cleaned.stdout).cleaned, true);
 });
+
+test("a host observes, prepares, substitutes the marker, and commits over stdio", async (t) => {
+  const source = "def top():\n    return 1\n";
+  const root = await workspaceFor(t, { "a.py": source });
+  assert.equal((await run(["init", "--root", root])).code, 0);
+
+  const child = spawn(process.execPath, [bin, "serve", "--stdio", "--root", root], { stdio: ["pipe", "pipe", "pipe"] });
+  t.after(() => {
+    if (!child.killed) child.kill();
+  });
+  let buffer = "";
+  const waiting = [];
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let newline;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (line.length === 0) continue;
+      const next = waiting.shift();
+      if (next) next(JSON.parse(line));
+    }
+  });
+  function call(message) {
+    return new Promise((resolve, reject) => {
+      child.once("error", reject);
+      waiting.push(resolve);
+      child.stdin.write(`${JSON.stringify({ protocol: "freshctx/1", ...message })}\n`);
+    });
+  }
+
+  const hello = await call({ id: "h", op: "hello", session_id: "host", capabilities });
+  assert.equal(hello.ok, true);
+  const observed = await call({
+    id: "o",
+    op: "observe",
+    result_id: "read-1",
+    path: "a.py",
+    content_utf8_base64: Buffer.from(source).toString("base64"),
+  });
+  assert.equal(observed.ok, true);
+  assert.match(observed.result.marker, /^\[[0-9a-f]{8}\]$/u);
+
+  const plan = await call({
+    id: "p",
+    op: "prepare",
+    request_id: "req-1",
+    result_ids: ["read-1"],
+    budget_bytes: 4096,
+  });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  const projection = Buffer.from(plan.result.projection_utf8_base64, "base64").toString("utf8");
+  assert.match(projection, /def top/u);
+  assert.equal(plan.result.replacements[0].marker, observed.result.marker);
+
+  const committed = await call({ id: "c", op: "commit", plan_id: plan.result.plan_id });
+  assert.equal(committed.ok, true);
+  assert.equal(committed.result.applied, true);
+  child.stdin.end();
+});

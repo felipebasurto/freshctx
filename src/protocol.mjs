@@ -114,8 +114,6 @@ export function parseRequest(value) {
         fail("invalid_request", "result_ids must not contain duplicates");
       }
       request.budgetBytes = requiredSafeInteger(requiredField(value, "budget_bytes"), "budget_bytes");
-      // Additive granularity control: "region" (default) or "file" (whole-file
-      // control). Unknown values fail; absence means region.
       const granularity = optionalField(value, "selection_granularity");
       if (granularity !== undefined && granularity !== "region" && granularity !== "file") {
         fail("invalid_request", "selection_granularity must be region or file");

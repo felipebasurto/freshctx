@@ -9,7 +9,7 @@ The service accepts only relative regular UTF-8 files below the supplied
 workspace root. It rejects symlinks, path traversal, binary files, unstable
 snapshots, and files larger than 512 KiB. These controls reduce accidental
 exposure; they are not a substitute for OS permissions, disk encryption, or a
-security review of a bridge.
+security review of a host that speaks this protocol.
 
 FreshCtx rechecks paths and file metadata around each read, but Node's portable
 filesystem API cannot make a pathname walk immune to a hostile local process

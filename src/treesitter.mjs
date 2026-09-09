@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { Language, Parser } from "../vendor/treesitter/web-tree-sitter.mjs";
+import { Language, Parser } from "../vendor/treesitter/web-tree-sitter.js";
 
 const LANGUAGE_BY_EXTENSION = new Map([
   [".py", "python"],
@@ -107,7 +107,7 @@ export const supportedLanguages = Object.freeze([...new Set(LANGUAGE_BY_EXTENSIO
 
 async function initializeRuntime() {
   if (!runtimeReady) {
-    runtimeReady = Parser.init({ locateFile: () => vendorPath("tree-sitter.wasm") });
+    runtimeReady = Parser.init();
   }
   await runtimeReady;
 }

@@ -149,7 +149,6 @@ function resolvedRegion({
   };
 }
 
-/** Smallest parsed symbol fully containing the span; null when unparsed/ambiguous. */
 function parentForRange(parsed, startByte, endByte) {
   if (!parsed || parsed.status !== "ok") return null;
   return enclosingParsedUnit(parsed.units, startByte, endByte);
@@ -201,13 +200,10 @@ function planFingerprint(request) {
 }
 
 export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
-// A session keeps at most this many uncommitted plans, newest preparedAt first.
-// prepare A → prepare B → commit A succeeds when A is still inside this window.
 export const MAX_PENDING_PLANS = 16;
 
 class PrepareSourceCache {
   constructor() {
-    // One disk snapshot and Tree-sitter index per path for this prepare.
     this.byPath = new Map();
   }
 
@@ -314,10 +310,6 @@ export class FreshCtxSession {
         const resolved = await uniqueUnitForRange({ path: sourcePath, text: snapshot.text, range: request.range });
         if (resolved.unit) unit = resolvedSymbol({ sourcePath, observedAt, snapshot, parsed: resolved.unit });
         else if (resolved.status === "ok" || resolved.status === "ambiguous") {
-          // Caller-granularity regions for spans inside a parseable file
-          // that fall outside every symbol. These carry referent anchors so
-          // byte shifts relocate instead of drift. Unsupported and broken
-          // files keep the whole-file fallback below.
           const parent = parentForRange(
             resolved.status === "ok" ? resolved : { status: "ok", units: [] },
             request.range.startByte,
@@ -528,10 +520,6 @@ export class FreshCtxSession {
         }
         continue;
       }
-      // Whole-file control: same relevant file set, file granularity. Region
-      // and symbol candidates widen to the synchronized current whole file;
-      // the candidate keeps its unit id so replacements/markers are unchanged.
-      // NOTE: PrepareSourceCache.snapshot takes (cache, workspace, path).
       if (granularity === SELECTION_GRANULARITY_FILE && candidate.kind !== "file") {
         const filePath = candidate.path ?? original.path;
         const snapshot = await PrepareSourceCache.snapshot(refresh, this.workspace, filePath);
@@ -605,12 +593,6 @@ export class FreshCtxSession {
     return clone(response);
   }
 
-  /**
-   * Structural counterfactual for region mode: the synchronized whole-file
-   * bytes of every distinct selected file, measured but never injected. Uses
-   * the same per-prepare snapshots as the projection, so the comparison is
-   * against current disk state, not history.
-   */
   async wholeFileCounterfactual(cache, selected) {
     const seen = new Map();
     for (const unit of selected) {
