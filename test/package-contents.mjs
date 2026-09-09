@@ -20,7 +20,11 @@ const files = packed[0].files.map((entry) => entry.path).sort();
 const binEntry = packed[0].files.find((entry) => entry.path === "bin/freshctx.mjs");
 const manifestPkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 assert.equal(Boolean(manifestPkg.scripts["bench:addon"]), false, "product package must not ship bench scripts");
-assert.equal(manifestPkg.exports, undefined);
+assert.deepEqual(manifestPkg.exports, {
+  "./hash": "./src/hash.mjs",
+  "./workspace": "./src/workspace.mjs",
+});
+assert.deepEqual(manifestPkg.dependencies ?? {}, {}, "product package must not depend on bridges");
 assert.equal(manifestPkg.scripts.verify, undefined);
 
 const forbidden = /^(test|adapters|bridges|bench|autoresearch|capture|papers|examples|scripts|docs)\//u;

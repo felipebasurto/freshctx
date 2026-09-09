@@ -43,5 +43,9 @@
     "name": "Felipe Basurto",
     "url": "https://felipebasurto.com"
   },
-  "private": true
+  "private": true,
+  "exports": {
+    "./hash": "./src/hash.mjs",
+    "./workspace": "./src/workspace.mjs"
+  }
 }
