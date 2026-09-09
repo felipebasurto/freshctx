@@ -2,10 +2,21 @@ import { mkdir, lstat, open, readFile, readdir, rename, rm } from "node:fs/promi
 import path from "node:path";
 
 import { fail } from "./errors.mjs";
-import { digestFromRevision, randomId, sha256, stableId } from "./hash.mjs";
+import {
+  compactUnitId,
+  digestFromRevision,
+  fileUnitIdentity,
+  legacyCompactUnitId,
+  randomId,
+  regionUnitIdentity,
+  sha256,
+  stableId,
+  symbolUnitIdentity,
+} from "./hash.mjs";
 
 const STATE_DIRECTORY = ".freshctx";
-const SCHEMA_VERSION = 1;
+const CONFIG_SCHEMA_VERSION = 1;
+const SESSION_SCHEMA_VERSION = 2;
 const STATE_PRODUCT = "freshctx";
 const LIFECYCLE_LOCK = "lifecycle.lock";
 const LIFECYCLE_RECOVERY_PREFIX = `${LIFECYCLE_LOCK}.recovering.`;
@@ -102,7 +113,7 @@ function validateConfig(config) {
   if (!isRecord(config) || !Object.hasOwn(config, "product") || config.product !== STATE_PRODUCT) {
     fail("state_unsafe", "FreshCtx state does not have an owned configuration");
   }
-  if (!Object.hasOwn(config, "version") || config.version !== SCHEMA_VERSION) {
+  if (!Object.hasOwn(config, "version") || config.version !== CONFIG_SCHEMA_VERSION) {
     fail("state_version", "FreshCtx state uses an unsupported schema version");
   }
   if (!Object.hasOwn(config, "maxSourceBytes") || !Number.isSafeInteger(config.maxSourceBytes) || config.maxSourceBytes <= 0) {
@@ -253,8 +264,8 @@ async function removeInactiveSessionLocks(lockDirectory) {
   }
 }
 
-function validateSessionState(state, sessionId) {
-  if (!isRecord(state) || !Object.hasOwn(state, "version") || state.version !== SCHEMA_VERSION
+function validateSessionHeader(state, sessionId, version) {
+  if (!isRecord(state) || !Object.hasOwn(state, "version") || state.version !== version
     || !Object.hasOwn(state, "sessionId") || state.sessionId !== sessionId
     || !Object.hasOwn(state, "observations") || !Object.hasOwn(state, "units")
     || !Object.hasOwn(state, "pendingPlans") || !Object.hasOwn(state, "committedPlans")
@@ -267,12 +278,187 @@ function validateSessionState(state, sessionId) {
   state.committedPlans = normalizeRecord(state.committedPlans, "session committed plans");
 }
 
+function validateSessionV1(state, sessionId) {
+  validateSessionHeader(state, sessionId, 1);
+}
+
+function validateSessionV2(state, sessionId) {
+  validateSessionHeader(state, sessionId, SESSION_SCHEMA_VERSION);
+  state.aliases = normalizeRecord(state.aliases, "session unit aliases");
+  for (const [unitId, unit] of Object.entries(state.units)) {
+    if (!/^[a-f0-9]{24}$/u.test(unitId) || !isRecord(unit) || unit.id !== unitId
+      || !isRecord(unit.identity) || compactUnitId(unit.identity) !== unitId) {
+      fail("state_corrupt", "FreshCtx session unit identity is invalid");
+    }
+  }
+  for (const observation of Object.values(state.observations)) {
+    if (!isRecord(observation)) fail("state_corrupt", "FreshCtx session observation is invalid");
+    if (observation.unavailable) {
+      if (observation.unitId !== null || !isRecord(observation.unavailable)
+        || typeof observation.unavailable.reason !== "string"
+        || typeof observation.unavailable.legacyUnitId !== "string") {
+        fail("state_corrupt", "FreshCtx unavailable observation is invalid");
+      }
+    } else if (typeof observation.unitId !== "string" || !Object.hasOwn(state.units, observation.unitId)) {
+      fail("state_corrupt", "FreshCtx observation references an unknown unit");
+    }
+  }
+  for (const alias of Object.values(state.aliases)) {
+    if (!isRecord(alias) || typeof alias.unitId !== "string" || !Object.hasOwn(state.units, alias.unitId)) {
+      fail("state_corrupt", "FreshCtx unit alias is invalid");
+    }
+  }
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function fingerprintedRegion(unit) {
+  return unit.kind === "region"
+    && typeof unit.path === "string"
+    && typeof unit.prefixAnchor === "string"
+    && typeof unit.suffixAnchor === "string";
+}
+
+function identityVerdict(oldId, unit, observations) {
+  if (!isRecord(unit)) fail("state_corrupt", "FreshCtx session unit is invalid");
+  if (observations.some((observation) => observation.path !== unit.path)) {
+    return { unavailable: "identity_collision" };
+  }
+  if (unit.kind !== "file" && observations.some((observation) => observation.range === null)) {
+    return { unavailable: "identity_collision" };
+  }
+  if (unit.kind === "file" && typeof unit.path === "string") {
+    const identity = fileUnitIdentity(unit.path);
+    return legacyCompactUnitId(identity) === oldId
+      ? { identity, alias: true }
+      : { unavailable: "identity_collision" };
+  }
+  if (unit.kind === "symbol" && typeof unit.path === "string" && typeof unit.selector === "string") {
+    const identity = symbolUnitIdentity(unit.path, unit.selector);
+    return legacyCompactUnitId(identity) === oldId
+      ? { identity, alias: true }
+      : { unavailable: "identity_collision" };
+  }
+  if (!fingerprintedRegion(unit)) {
+    return { unavailable: unit.kind === "region" ? "legacy_region" : "identity_collision" };
+  }
+  const revisions = [...new Set([
+    unit.referentRevision,
+    unit.revision,
+    ...(Array.isArray(unit.revisions) ? unit.revisions : []),
+  ].filter((revision) => typeof revision === "string"))];
+  const parents = [...new Set([unit.parentSelector ?? null, null])];
+  const matches = new Map();
+  for (const revision of revisions) {
+    for (const parent of parents) {
+      const identity = regionUnitIdentity(
+        unit.path,
+        revision,
+        unit.prefixAnchor,
+        unit.suffixAnchor,
+        parent,
+      );
+      if (legacyCompactUnitId(identity) === oldId) {
+        matches.set(compactUnitId(identity), identity);
+      }
+    }
+  }
+  if (matches.size > 1) return { unavailable: "identity_collision" };
+  if (matches.size === 1) return { identity: [...matches.values()][0], alias: true };
+  const revision = unit.referentRevision ?? unit.revision;
+  if (typeof revision !== "string") return { unavailable: "legacy_region" };
+  return {
+    identity: regionUnitIdentity(
+      unit.path,
+      revision,
+      unit.prefixAnchor,
+      unit.suffixAnchor,
+      unit.parentSelector ?? null,
+    ),
+    alias: false,
+  };
+}
+
+function migrateSessionV1(state) {
+  const observationsByUnit = new Map();
+  for (const observation of Object.values(state.observations)) {
+    if (!isRecord(observation) || typeof observation.unitId !== "string") {
+      fail("state_corrupt", "FreshCtx session observation is invalid");
+    }
+    const bound = observationsByUnit.get(observation.unitId) ?? [];
+    bound.push(observation);
+    observationsByUnit.set(observation.unitId, bound);
+  }
+  const units = Object.create(null);
+  const aliases = Object.create(null);
+  const outcomes = new Map();
+  for (const [oldId, unit] of Object.entries(state.units)) {
+    const verdict = identityVerdict(oldId, unit, observationsByUnit.get(oldId) ?? []);
+    if (verdict.unavailable) {
+      outcomes.set(oldId, verdict);
+      continue;
+    }
+    const unitId = compactUnitId(verdict.identity);
+    const migrated = clone(unit);
+    migrated.id = unitId;
+    migrated.identity = verdict.identity;
+    Object.defineProperty(units, unitId, {
+      value: migrated,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    if (verdict.alias) {
+      Object.defineProperty(aliases, oldId, {
+        value: { unitId },
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    outcomes.set(oldId, { unitId });
+  }
+  const observations = Object.create(null);
+  for (const [resultId, observation] of Object.entries(state.observations)) {
+    const migrated = clone(observation);
+    const outcome = outcomes.get(observation.unitId) ?? { unavailable: "identity_collision" };
+    if (outcome.unavailable) {
+      migrated.unitId = null;
+      migrated.unavailable = {
+        reason: outcome.unavailable,
+        legacyUnitId: observation.unitId,
+      };
+    } else {
+      migrated.unitId = outcome.unitId;
+    }
+    Object.defineProperty(observations, resultId, {
+      value: migrated,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return {
+    version: SESSION_SCHEMA_VERSION,
+    sessionId: state.sessionId,
+    observations,
+    units,
+    aliases,
+    pendingPlans: state.pendingPlans,
+    committedPlans: state.committedPlans,
+    sequence: state.sequence,
+  };
+}
+
 function blankSession(sessionId) {
   return {
-    version: SCHEMA_VERSION,
+    version: SESSION_SCHEMA_VERSION,
     sessionId,
     observations: Object.create(null),
     units: Object.create(null),
+    aliases: Object.create(null),
     pendingPlans: Object.create(null),
     committedPlans: Object.create(null),
     sequence: 0,
@@ -284,7 +470,7 @@ export async function initializeStore(workspace) {
   const created = await createStateDirectory(root);
   const configPath = path.join(root, "config.json");
   if (created) {
-    await writeAtomic(configPath, `${JSON.stringify({ product: STATE_PRODUCT, version: SCHEMA_VERSION, maxSourceBytes: 524288 })}\n`);
+    await writeAtomic(configPath, `${JSON.stringify({ product: STATE_PRODUCT, version: CONFIG_SCHEMA_VERSION, maxSourceBytes: 524288 })}\n`);
   } else {
     const current = await readJson(configPath);
     if (current === null) {
@@ -355,8 +541,20 @@ export async function openSessionStore(workspace, sessionId) {
   let state;
   try {
     lock = await acquireSessionLock(lockPath);
-    state = await readJson(sessionPath) ?? blankSession(sessionId);
-    validateSessionState(state, sessionId);
+    const stored = await readJson(sessionPath);
+    if (stored === null) {
+      state = blankSession(sessionId);
+    } else if (stored.version === 1) {
+      validateSessionV1(stored, sessionId);
+      state = migrateSessionV1(stored);
+      validateSessionV2(state, sessionId);
+      await writeAtomic(sessionPath, `${JSON.stringify(state)}\n`);
+    } else if (stored.version === SESSION_SCHEMA_VERSION) {
+      state = stored;
+      validateSessionV2(state, sessionId);
+    } else {
+      fail("state_version", "FreshCtx session state uses an unsupported schema version");
+    }
   } catch (error) {
     if (lock) await releaseLock(lock);
     throw error;

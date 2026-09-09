@@ -20,7 +20,30 @@ export function stableId(prefix, fields) {
 }
 
 export function compactUnitId(fields) {
+  return sha256(JSON.stringify(fields)).slice(0, 24);
+}
+
+export function legacyCompactUnitId(fields) {
   return sha256(JSON.stringify(fields)).slice(0, 8);
+}
+
+export function fileUnitIdentity(sourcePath) {
+  return { kind: "file", path: sourcePath };
+}
+
+export function symbolUnitIdentity(sourcePath, selector) {
+  return { kind: "symbol", path: sourcePath, selector };
+}
+
+export function regionUnitIdentity(sourcePath, revision, prefixAnchor, suffixAnchor, parentSelector = null) {
+  return {
+    kind: "region",
+    path: sourcePath,
+    revision,
+    prefixAnchor,
+    suffixAnchor,
+    parentSelector,
+  };
 }
 
 export function randomId(prefix) {

@@ -102,7 +102,7 @@ test("a host observes, prepares, substitutes the marker, and commits over stdio"
     content_utf8_base64: Buffer.from(source).toString("base64"),
   });
   assert.equal(observed.ok, true);
-  assert.match(observed.result.marker, /^\[[0-9a-f]{8}\]$/u);
+  assert.match(observed.result.marker, /^\[[0-9a-f]{24}\]$/u);
 
   const plan = await call({
     id: "p",

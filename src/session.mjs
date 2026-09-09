@@ -1,5 +1,14 @@
 import { FreshCtxError, fail } from "./errors.mjs";
-import { compactUnitId, equalBytes, revisionFor, sha256, stableId } from "./hash.mjs";
+import {
+  compactUnitId,
+  equalBytes,
+  fileUnitIdentity,
+  regionUnitIdentity,
+  revisionFor,
+  sha256,
+  stableId,
+  symbolUnitIdentity,
+} from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
 import { VERSION } from "./protocol.mjs";
 import { anchorsFor, ANCHOR_BYTES, enclosingParsedUnit, relocateRegion } from "./relocate.mjs";
@@ -33,15 +42,7 @@ function sameRange(left, right) {
 }
 
 function fileUnitId(sourcePath) {
-  return compactUnitId({ kind: "file", path: sourcePath });
-}
-
-function symbolUnitId(sourcePath, selector) {
-  return compactUnitId({ kind: "symbol", path: sourcePath, selector });
-}
-
-function regionUnitId(sourcePath, referentRevision, prefixAnchor, suffixAnchor, parentSelector = null) {
-  return compactUnitId({ kind: "region", path: sourcePath, revision: referentRevision, prefixAnchor, suffixAnchor, parentSelector });
+  return compactUnitId(fileUnitIdentity(sourcePath));
 }
 
 function lineRangeForText(text) {
@@ -94,8 +95,10 @@ function unresolvedUnit({ id, sourcePath, kind, selector = null, observedAt, rea
 function resolvedFile({ sourcePath, observedAt, snapshot, resolution = "file" }) {
   const revision = revisionFor(snapshot.bytes);
   const lines = lineRangeForText(snapshot.text);
+  const identity = fileUnitIdentity(sourcePath);
   return {
-    id: fileUnitId(sourcePath),
+    id: compactUnitId(identity),
+    identity,
     path: sourcePath,
     kind: "file",
     selector: null,
@@ -124,8 +127,16 @@ function resolvedRegion({
   const revision = revisionFor(bytes);
   const observedText = utf8Slice(snapshot.bytes, range.startByte, range.endByte);
   const anchors = fingerprint ?? anchorsFor(snapshot.bytes, range.startByte, range.endByte);
+  const identity = regionUnitIdentity(
+    sourcePath,
+    revision,
+    anchors.prefixAnchor,
+    anchors.suffixAnchor,
+    parent?.selector ?? null,
+  );
   return {
-    id: regionUnitId(sourcePath, revision, anchors.prefixAnchor, anchors.suffixAnchor, parent?.selector ?? null),
+    id: compactUnitId(identity),
+    identity,
     path: sourcePath,
     kind: "region",
     selector: null,
@@ -157,8 +168,10 @@ function parentForRange(parsed, startByte, endByte) {
 function resolvedSymbol({ sourcePath, observedAt, snapshot, parsed }) {
   const bytes = snapshot.bytes.subarray(parsed.startByte, parsed.endByte);
   const revision = revisionFor(bytes);
+  const identity = symbolUnitIdentity(sourcePath, parsed.selector);
   return {
-    id: symbolUnitId(sourcePath, parsed.selector),
+    id: compactUnitId(identity),
+    identity,
     path: sourcePath,
     kind: "symbol",
     selector: parsed.selector,
@@ -287,6 +300,18 @@ export class FreshCtxSession {
       if (existing.path !== sourcePath || existing.observedRevision !== observedRevision || !sameRange(existing.range, request.range)) {
         fail("idempotency_conflict", "result_id was already observed with different content");
       }
+      if (existing.unavailable) {
+        const unit = {
+          id: existing.unavailable.legacyUnitId,
+          path: sourcePath,
+        };
+        return {
+          result_id: request.resultId,
+          unit_id: unit.id,
+          marker: unavailableMarker(unit, existing.unavailable.reason),
+          idempotent: true,
+        };
+      }
       const unit = recordValue(this.store.state.units, existing.unitId);
       return {
         result_id: request.resultId,
@@ -363,6 +388,7 @@ export class FreshCtxSession {
   async updateStoredUnit(unit) {
     const stored = persistable(unit);
     const previous = recordValue(this.store.state.units, unit.id);
+    stored.identity = previous?.identity ?? stored.identity;
     stored.revisions = [...(previous?.revisions ?? [])];
     appendRevision(stored, unit.revision);
     await this.store.putBlob(Buffer.from(unit.content, "utf8"));
@@ -375,7 +401,7 @@ export class FreshCtxSession {
     const original = recordValue(this.store.state.units, unit.id);
     if (original) appendRevision(original, file.revision);
     await this.store.putBlob(Buffer.from(file.content, "utf8"));
-    return { ...file, id: unit.id };
+    return { ...file, id: unit.id, identity: unit.identity };
   }
 
   async currentRegion(unit, snapshot, observedAt, parsed = null) {
@@ -424,6 +450,7 @@ export class FreshCtxSession {
         fingerprint: { prefixAnchor: unit.prefixAnchor, suffixAnchor: unit.suffixAnchor },
       });
       candidate.id = unit.id;
+      candidate.identity = unit.identity;
       candidate.relocation = outcome.status;
       candidate.previousRange = { startByte: unit.startByte, endByte: unit.endByte };
       await this.updateStoredUnit(candidate);
@@ -486,12 +513,22 @@ export class FreshCtxSession {
     }
     const refresh = new PrepareSourceCache();
 
-    const active = request.resultIds.map((resultId) => recordValue(this.store.state.observations, resultId)).filter(Boolean);
+    const requested = request.resultIds
+      .map((resultId) => recordValue(this.store.state.observations, resultId))
+      .filter(Boolean);
+    const active = requested.filter((observation) => !observation.unavailable);
     const unknown = request.resultIds
       .filter((resultId) => !recordValue(this.store.state.observations, resultId))
       .map((resultId) => ({ result_id: resultId, reason: "unknown_result" }));
+    const unavailable = requested
+      .filter((observation) => observation.unavailable)
+      .map((observation) => ({
+        result_id: observation.resultId,
+        path: observation.path,
+        reason: observation.unavailable.reason,
+      }));
     const candidates = [];
-    const unresolved = [...unknown];
+    const unresolved = [...unknown, ...unavailable];
     const refreshed = new Map();
     const latestByUnit = new Map();
     for (const observation of active) {
@@ -546,7 +583,18 @@ export class FreshCtxSession {
         },
       ]),
     );
-    const replacements = active.map((observation) => {
+    const replacements = requested.map((observation) => {
+      if (observation.unavailable) {
+        const unit = {
+          id: observation.unavailable.legacyUnitId,
+          path: observation.path,
+        };
+        return {
+          result_id: observation.resultId,
+          expected_sha256: observation.observedRevision,
+          marker: unavailableMarker(unit, observation.unavailable.reason),
+        };
+      }
       const unit = recordValue(this.store.state.units, observation.unitId) ?? { id: observation.unitId, path: observation.path };
       const candidate = refreshed.get(observation.unitId);
       const supplied = candidate?.state === "resolved" && selectedIds.has(candidate.id);
@@ -642,7 +690,8 @@ export class FreshCtxSession {
   }
 
   async recover(request) {
-    const unit = recordValue(this.store.state.units, request.unitId);
+    const alias = recordValue(this.store.state.aliases, request.unitId);
+    const unit = recordValue(this.store.state.units, alias?.unitId ?? request.unitId);
     if (!unit) fail("unknown_unit", "unit_id is not known in this session");
     if (!unit.revisions?.includes(request.revision)) {
       fail("unknown_revision", "revision is not archived for this unit");

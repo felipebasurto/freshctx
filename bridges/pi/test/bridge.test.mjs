@@ -128,7 +128,7 @@ test('moved-symbol and tax-base projection headers are not Pi line offsets', asy
   assert.match(String(projection), /return amount \* 2/u);
   assert.ok(46 > read.details.totalLines, `byte length 46 used as offset is past EOF (${read.details.totalLines} lines)`);
   assert.ok(122 > read.details.totalLines, `byte length 122 used as offset is past EOF (${read.details.totalLines} lines)`);
-  assert.match(rewritten.messages[1].content, /^\[[0-9a-f]{8}\]$/u);
+  assert.match(rewritten.messages[1].content, /^\[[0-9a-f]{24}\]$/u);
 });
 
 test('resume follows a moved symbol; compacted results stay inactive until read again', async t => {
