@@ -3,32 +3,32 @@
   "license": "MIT",
   "assets": [
     {
-      "file": "web-tree-sitter.js",
+      "file": "web-tree-sitter.mjs",
       "package": "web-tree-sitter",
-      "version": "0.27.0",
-      "source": "https://www.npmjs.com/package/web-tree-sitter/v/0.27.0",
-      "sha256": "7c49e3c1d87e24e0bb4c2def909d17154dfde281f5f8280225450090bb4b8110"
+      "version": "0.25.10",
+      "source": "https://www.npmjs.com/package/web-tree-sitter/v/0.25.10",
+      "sha256": "d4fc466df6358055253bc4cdaab23cdf84fe00741fa5a4ff56506c06c533da42"
     },
     {
-      "file": "web-tree-sitter.wasm",
+      "file": "tree-sitter.wasm",
       "package": "web-tree-sitter",
-      "version": "0.27.0",
-      "source": "https://www.npmjs.com/package/web-tree-sitter/v/0.27.0",
-      "sha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3"
+      "version": "0.25.10",
+      "source": "https://www.npmjs.com/package/web-tree-sitter/v/0.25.10",
+      "sha256": "f38dcc4b43b818f9a0785bc1c6d5611a75ac4cdd428ff3f02757c34ca4e46d7f"
     },
     {
       "file": "tree-sitter-python.wasm",
       "package": "tree-sitter-python",
-      "version": "0.25.0",
-      "source": "https://www.npmjs.com/package/tree-sitter-python/v/0.25.0",
-      "sha256": "16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47"
+      "version": "0.23.6",
+      "source": "https://www.npmjs.com/package/tree-sitter-python/v/0.23.6",
+      "sha256": "8c93692fb368e288a5824cee55773c9b3602804f513bda48c97661e52e9c2da2"
     },
     {
       "file": "tree-sitter-javascript.wasm",
       "package": "tree-sitter-javascript",
-      "version": "0.25.0",
-      "source": "https://www.npmjs.com/package/tree-sitter-javascript/v/0.25.0",
-      "sha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240"
+      "version": "0.23.1",
+      "source": "https://www.npmjs.com/package/tree-sitter-javascript/v/0.23.1",
+      "sha256": "4a378293fe7853cbee2836023be072dafa0e53b3b5edb245920838ca834ed121"
     },
     {
       "file": "tree-sitter-typescript.wasm",

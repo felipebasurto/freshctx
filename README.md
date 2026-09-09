@@ -31,7 +31,7 @@ node bin/freshctx.mjs serve --stdio --root /path/to/workspace
 The wiring is yours. After each workspace read, send `observe`. Before the
 model call, `prepare`. In a copy of the request, replace the old source
 with the returned `marker`, insert the projection, `commit`, then send.
-If any step fails, drop the plan.
+If any step fails, drop the plan. Do not send the original request.
 
 `init` writes `.freshctx/` (Git exclude only, never `.gitignore`). `clean`
 deletes the archive. See [SECURITY.md](SECURITY.md).

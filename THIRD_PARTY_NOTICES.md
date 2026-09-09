@@ -5,9 +5,9 @@ Each is licensed under the MIT License.
 
 | Component | Version | Files |
 | --- | --- | --- |
-| web-tree-sitter | 0.27.0 | `web-tree-sitter.js`, `web-tree-sitter.wasm` |
-| tree-sitter-python | 0.25.0 | `tree-sitter-python.wasm` |
-| tree-sitter-javascript | 0.25.0 | `tree-sitter-javascript.wasm` |
+| web-tree-sitter | 0.25.10 | `web-tree-sitter.mjs`, `tree-sitter.wasm` |
+| tree-sitter-python | 0.23.6 | `tree-sitter-python.wasm` |
+| tree-sitter-javascript | 0.23.1 | `tree-sitter-javascript.wasm` |
 | tree-sitter-typescript | 0.23.2 | `tree-sitter-typescript.wasm`, `tree-sitter-tsx.wasm` |
 | tree-sitter-go | 0.25.0 | `tree-sitter-go.wasm` |
 | tree-sitter-rust | 0.24.0 | `tree-sitter-rust.wasm` |
