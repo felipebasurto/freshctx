@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  official-package:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,36 +15,3 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run pack:check
-  pi-bridge:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bridges/pi
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.19.0"
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-        env:
-          PI_OFFLINE: '1'
-  openhands-bridge:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bridges/openhands
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: python3 -m py_compile freshctx_openhands.py
-      - run: python3 test/test_hook.py

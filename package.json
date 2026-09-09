@@ -1,7 +1,7 @@
 {
   "name": "freshctx",
   "version": "0.1.0",
-  "description": "Local sidecar that keeps coding-agent context current over JSONL.",
+  "description": "Local context engine for coding agents.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -17,7 +17,6 @@
     "vendor",
     "LICENSE",
     "README.md",
-    "HARNESSES.md",
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md"
   ],
