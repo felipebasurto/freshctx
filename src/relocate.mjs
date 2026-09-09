@@ -1,31 +1,12 @@
-// Pure region relocation: stable identity (referent bytes + anchors + structural
-// parent) is matched against the current snapshot to compute current placement.
-// No I/O, no store access; session.mjs supplies inputs and interprets outputs.
-//
-// Matching hierarchy (strongest evidence first):
-//   1. in-place exact bytes (STABLE)
-//   2. structural parent relocation with exact bytes at translated offsets (RELOCATED)
-//   3. exact referent bytes found elsewhere (RELOCATED; identical bytes project
-//      identically, so multiplicity is benign and anchor consistency only picks
-//      the most plausible placement for metadata)
-//   4. anchor-bracketed span with changed but similar content (UPDATED), gated by
-//      same-parent and bigram similarity
-//   5. in-place span with intact surroundings but similar changed content (UPDATED)
-// Otherwise AMBIGUOUS (distinct plausible spans) or INVALIDATED.
-//
-// Byte offsets are placement output here, never identity input.
-
 export const ANCHOR_BYTES = 128;
 export const SIMILARITY_THRESHOLD = 0.6;
 
-/** Leading/trailing byte context of a span, base64 so arbitrary bytes persist safely. */
 export function anchorsFor(snapshotBytes, startByte, endByte) {
   const prefix = snapshotBytes.subarray(Math.max(0, startByte - ANCHOR_BYTES), startByte);
   const suffix = snapshotBytes.subarray(endByte, Math.min(snapshotBytes.length, endByte + ANCHOR_BYTES));
   return { prefixAnchor: prefix.toString("base64"), suffixAnchor: suffix.toString("base64") };
 }
 
-/** All byte offsets where needle occurs in haystack (overlapping included). */
 export function findByteOccurrences(haystack, needle) {
   const offsets = [];
   if (needle.length === 0) return offsets;
@@ -39,7 +20,6 @@ export function findByteOccurrences(haystack, needle) {
   }
 }
 
-/** Smallest parsed symbol fully containing the span, or null. Ties break by selector. */
 export function enclosingParsedUnit(parsedUnits, startByte, endByte) {
   let best = null;
   for (const unit of parsedUnits ?? []) {
@@ -62,11 +42,6 @@ function bigramCounts(text) {
   return { counts, total: Math.max(0, text.length - 1) };
 }
 
-/**
- * Character-bigram Dice coefficient in [0, 1]. O(n) time, no edit distance.
- * Short strings (< 2 chars on either side) fall back to equality: differing
- * tiny spans are never "similar".
- */
 export function byteBigramSimilarity(leftText, rightText) {
   const left = bigramCounts(leftText);
   const right = bigramCounts(rightText);
@@ -78,13 +53,6 @@ export function byteBigramSimilarity(leftText, rightText) {
   return (2 * common) / (left.total + right.total);
 }
 
-/**
- * Span bracketed by anchor occurrences. Empty anchors pin the respective file
- * boundary; non-empty anchors may legally repeat, so the selected occurrence
- * pair is the one whose bracketed content best matches the referent (bigram
- * similarity, ties prefer the earliest span). Distinct-content spans stay
- * ambiguous; identical-content spans are unique (placement metadata only).
- */
 export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBytes, referentText = null) {
   const prefix = Buffer.from(prefixAnchor ?? "", "base64");
   const suffix = Buffer.from(suffixAnchor ?? "", "base64");
@@ -261,13 +229,6 @@ function surroundingsMatch(snapshotBytes, position, stored, before) {
   return actual.equals(stored.subarray(0, actual.length));
 }
 
-/**
- * Relocate a region identity against the current snapshot.
- *
- * Returns stable | relocated | updated with the current span, or
- * ambiguous | invalidated without a span. Never guesses among spans whose
- * contents differ.
- */
 export function relocateRegion(input) {
   const {
     snapshotBytes,

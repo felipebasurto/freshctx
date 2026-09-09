@@ -76,7 +76,8 @@
             "op": { "const": "prepare" },
             "request_id": { "type": "string", "minLength": 1 },
             "result_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-            "budget_bytes": { "type": "integer", "minimum": 0 }
+            "budget_bytes": { "type": "integer", "minimum": 0 },
+            "selection_granularity": { "enum": ["region", "file"] }
           },
           "required": ["request_id", "result_ids", "budget_bytes"]
         }
