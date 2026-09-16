@@ -267,3 +267,43 @@ test("JSONL write waiting for drain terminates when the output closes", async ()
     new Promise((_, reject) => setTimeout(() => reject(new Error("drain wait hung after output close")), 1000)),
   ]);
 });
+
+test("JSONL counts raw UTF-8 bytes before trimming whitespace on the newline path", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let body = "";
+  output.setEncoding("utf8");
+  output.on("data", (chunk) => { body += chunk; });
+  const running = serveJsonLines({
+    input,
+    output,
+    maxLineBytes: 11,
+    handle: async (raw) => ({ ok: true, id: raw.id }),
+  });
+  input.write(`  {"id":1}  \n{"id":2}\n`);
+  input.end();
+  await running;
+  const responses = body.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert.equal(responses[0].error.code, "request_too_large");
+  assert.equal(responses[1].ok, true);
+  assert.equal(responses[1].id, 2);
+});
+
+test("JSONL counts raw UTF-8 bytes before trimming whitespace on the EOF path", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let body = "";
+  output.setEncoding("utf8");
+  output.on("data", (chunk) => { body += chunk; });
+  const running = serveJsonLines({
+    input,
+    output,
+    maxLineBytes: 8,
+    handle: async (raw) => ({ ok: true, id: raw.id }),
+  });
+  input.end("  {\"id\":1}  ");
+  await running;
+  const responses = body.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].error.code, "request_too_large");
+});

@@ -21,7 +21,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "check": "node --check bin/freshctx.mjs src/*.mjs",
+    "check": "node test/syntax-check.mjs",
     "test": "node --test test/*.test.mjs",
     "pack:check": "node test/package-contents.mjs"
   },

@@ -17,7 +17,16 @@
 - Keep up to 16 pending plans per session so `commit A` still works after
   `prepare B`. Orphan projection blobs stay until `freshctx clean`; online
   expire/evict does not delete blobs while sessions are live.
-- JSONL writes waiting for drain terminate if the output stream closes.
+- Region refresh uses surrounding anchors before a global exact match, so
+  an edited span is not replaced by an unchanged duplicate. Identical
+  region fingerprints at different offsets keep distinct identities.
+  Missing or malformed region revisions leave sibling observations
+  preparable.
+- JSONL frame limits count raw UTF-8 bytes before trimming, including the
+  EOF path.
+- `npm run check` syntax-checks each source file. `npm run pack:check`
+  extracts the tarball and runs `doctor` plus observe, edit, prepare, and
+  commit on the packed CLI.
 
 ## 0.1.0
 

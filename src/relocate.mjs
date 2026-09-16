@@ -256,6 +256,12 @@ export function relocateRegion(input) {
   const similarEnough = (start, end) =>
     byteBigramSimilarity(decode(snapshotBytes.subarray(start, end)), decode(referentBytes)) >= SIMILARITY_THRESHOLD;
 
+  const storedPrefix = Buffer.from(prefixAnchor, "base64");
+  const storedSuffix = Buffer.from(suffixAnchor, "base64");
+  const surroundingsAt = (start, end) =>
+    surroundingsMatch(snapshotBytes, start, storedPrefix, true)
+    && surroundingsMatch(snapshotBytes, end, storedSuffix, false);
+
   // 1. Unmoved and unchanged.
   if (matchesReferent(prevStart, prevEnd)) {
     return { status: "stable", startByte: prevStart, endByte: prevEnd };
@@ -277,21 +283,32 @@ export function relocateRegion(input) {
     }
   }
 
-  // 3. Exact referent bytes elsewhere. Identical bytes project identically, so
-  // multiplicity is benign; anchor-consistent surroundings pick the placement.
-  const occurrences = findByteOccurrences(snapshotBytes, referentBytes);
-  if (occurrences.length > 0) {
-    const storedPrefix = Buffer.from(prefixAnchor, "base64");
-    const storedSuffix = Buffer.from(suffixAnchor, "base64");
-    const anchored = occurrences.find(
-      (at) => surroundingsMatch(snapshotBytes, at, storedPrefix, true)
-        && surroundingsMatch(snapshotBytes, at + referentBytes.length, storedSuffix, false),
-    );
-    const at = anchored ?? occurrences[0];
-    return { status: "relocated", startByte: at, endByte: at + referentBytes.length };
+  // 3. Surroundings still pin the original placement. Refresh in place and do
+  // not jump to an unchanged duplicate elsewhere.
+  if (inBounds(prevStart, prevEnd) && surroundingsAt(prevStart, prevEnd) && sameParent(prevStart, prevEnd)) {
+    if (similarEnough(prevStart, prevEnd)) {
+      return { status: "updated", startByte: prevStart, endByte: prevEnd };
+    }
+    return { status: "invalidated" };
   }
 
-  // 4. Anchors bracket exactly one span whose content changed but stays similar.
+  // 4. Exact referent bytes. A unique copy may have moved. Several copies
+  // without a single surroundings match are omitted, never occurrences[0].
+  const occurrences = findByteOccurrences(snapshotBytes, referentBytes);
+  if (occurrences.length === 1) {
+    const at = occurrences[0];
+    return { status: "relocated", startByte: at, endByte: at + referentBytes.length };
+  }
+  if (occurrences.length > 1) {
+    const anchored = occurrences.filter((at) => surroundingsAt(at, at + referentBytes.length));
+    if (anchored.length === 1) {
+      const at = anchored[0];
+      return { status: "relocated", startByte: at, endByte: at + referentBytes.length };
+    }
+    ambiguous = true;
+  }
+
+  // 5. Anchors bracket exactly one span whose content changed but stays similar.
   const bracketed = bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBytes, decode(referentBytes));
   if (bracketed.status === "unique") {
     if (sameParent(bracketed.startByte, bracketed.endByte) && similarEnough(bracketed.startByte, bracketed.endByte)) {
@@ -299,20 +316,6 @@ export function relocateRegion(input) {
     }
   } else if (bracketed.status === "ambiguous") {
     ambiguous = true;
-  }
-
-  // 5. Same span, intact surroundings, similar changed content (same-length edits).
-  if (inBounds(prevStart, prevEnd)) {
-    const storedPrefix = Buffer.from(prefixAnchor, "base64");
-    const storedSuffix = Buffer.from(suffixAnchor, "base64");
-    if (
-      surroundingsMatch(snapshotBytes, prevStart, storedPrefix, true)
-      && surroundingsMatch(snapshotBytes, prevEnd, storedSuffix, false)
-      && sameParent(prevStart, prevEnd)
-      && similarEnough(prevStart, prevEnd)
-    ) {
-      return { status: "updated", startByte: prevStart, endByte: prevEnd };
-    }
   }
 
   return { status: ambiguous ? "ambiguous" : "invalidated" };
