@@ -1,8 +1,8 @@
 import { FreshCtxError, fail } from "./errors.mjs";
-import { compactUnitId, equalBytes, revisionFor, sha256, stableId } from "./hash.mjs";
+import { compactUnitId, equalBytes, revisionFor, stableId } from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
 import { VERSION } from "./protocol.mjs";
-import { anchorsFor, ANCHOR_BYTES, enclosingParsedUnit, relocateRegion } from "./relocate.mjs";
+import { anchorsFor, enclosingParsedUnit, findByteOccurrences, relocateRegion } from "./relocate.mjs";
 import { parseUnits, supportedLanguages, uniqueUnitForRange } from "./treesitter.mjs";
 import { DEFAULT_MAX_SOURCE_BYTES, normalizeRelativePath, readStableText } from "./workspace.mjs";
 
@@ -40,8 +40,26 @@ function symbolUnitId(sourcePath, selector) {
   return compactUnitId({ kind: "symbol", path: sourcePath, selector });
 }
 
-function regionUnitId(sourcePath, referentRevision, prefixAnchor, suffixAnchor, parentSelector = null) {
-  return compactUnitId({ kind: "region", path: sourcePath, revision: referentRevision, prefixAnchor, suffixAnchor, parentSelector });
+function regionUnitId(sourcePath, referentRevision, prefixAnchor, suffixAnchor, parentSelector = null, occurrence = 0) {
+  const fields = { kind: "region", path: sourcePath, revision: referentRevision, prefixAnchor, suffixAnchor, parentSelector };
+  if (occurrence > 0) fields.occurrence = occurrence;
+  return compactUnitId(fields);
+}
+
+function regionOccurrence(snapshotBytes, range, anchors, parentSelector, parsedUnits = []) {
+  const referent = snapshotBytes.subarray(range.startByte, range.endByte);
+  if (referent.length === 0) return 0;
+  let index = 0;
+  for (const at of findByteOccurrences(snapshotBytes, referent)) {
+    if (at === range.startByte) return index;
+    const end = at + referent.length;
+    const atAnchors = anchorsFor(snapshotBytes, at, end);
+    if (atAnchors.prefixAnchor !== anchors.prefixAnchor || atAnchors.suffixAnchor !== anchors.suffixAnchor) continue;
+    const parent = enclosingParsedUnit(parsedUnits, at, end);
+    if ((parent?.selector ?? null) !== (parentSelector ?? null)) continue;
+    index += 1;
+  }
+  return 0;
 }
 
 function lineRangeForText(text) {
@@ -119,13 +137,18 @@ function resolvedRegion({
   resolution = "region",
   parent = null,
   fingerprint = null,
+  occurrence = 0,
+  parsedUnits = [],
 }) {
   const bytes = snapshot.bytes.subarray(range.startByte, range.endByte);
   const revision = revisionFor(bytes);
   const observedText = utf8Slice(snapshot.bytes, range.startByte, range.endByte);
   const anchors = fingerprint ?? anchorsFor(snapshot.bytes, range.startByte, range.endByte);
+  const occurrenceIndex = fingerprint
+    ? occurrence
+    : regionOccurrence(snapshot.bytes, range, anchors, parent?.selector ?? null, parsedUnits);
   return {
-    id: regionUnitId(sourcePath, revision, anchors.prefixAnchor, anchors.suffixAnchor, parent?.selector ?? null),
+    id: regionUnitId(sourcePath, revision, anchors.prefixAnchor, anchors.suffixAnchor, parent?.selector ?? null, occurrenceIndex),
     path: sourcePath,
     kind: "region",
     selector: null,
@@ -142,6 +165,7 @@ function resolvedRegion({
     prefixAnchor: anchors.prefixAnchor,
     suffixAnchor: anchors.suffixAnchor,
     parentSelector: parent?.selector ?? null,
+    occurrence: occurrenceIndex,
     observedLength: bytes.length,
     ...(parent
       ? { relativeStart: range.startByte - parent.startByte, relativeEnd: range.endByte - parent.startByte }
@@ -315,7 +339,14 @@ export class FreshCtxSession {
             request.range.startByte,
             request.range.endByte,
           );
-          unit = resolvedRegion({ sourcePath, observedAt, snapshot, range: request.range, parent });
+          unit = resolvedRegion({
+            sourcePath,
+            observedAt,
+            snapshot,
+            range: request.range,
+            parent,
+            parsedUnits: Array.isArray(resolved.units) ? resolved.units : [],
+          });
         }
       }
       if (!unit) unit = resolvedFile({ sourcePath, observedAt, snapshot, resolution: request.range ? "file-fallback" : "file" });
@@ -379,39 +410,40 @@ export class FreshCtxSession {
   }
 
   async currentRegion(unit, snapshot, observedAt, parsed = null) {
-    const referentBytes = await this.store.getBlob(unit.referentRevision ?? "");
-    if (!referentBytes) {
-      return unresolvedUnit({
-        id: unit.id,
-        sourcePath: unit.path,
-        kind: "region",
-        observedAt,
-        reason: "unknown_revision",
-      });
-    }
-    const outcome = relocateRegion({
-      snapshotBytes: snapshot.bytes,
-      parsedUnits: parsed?.status === "ok" ? parsed.units : [],
-      parsedOk: parsed?.status === "ok",
-      referentBytes,
-      prefixAnchor: unit.prefixAnchor ?? "",
-      suffixAnchor: unit.suffixAnchor ?? "",
-      parentSelector: unit.parentSelector ?? null,
-      relStart: unit.relativeStart ?? null,
-      relEnd: unit.relativeEnd ?? null,
-      prevStart: unit.startByte,
-      prevEnd: unit.endByte,
+    const unresolved = (reason) => unresolvedUnit({
+      id: unit.id,
+      sourcePath: unit.path,
+      kind: "region",
+      observedAt,
+      reason,
     });
-    if (outcome.status === "ambiguous" || outcome.status === "invalidated") {
-      return unresolvedUnit({
-        id: unit.id,
-        sourcePath: unit.path,
-        kind: "region",
-        observedAt,
-        reason: outcome.status === "ambiguous" ? "ambiguous" : "referent_missing",
-      });
-    }
     try {
+      const prefixAnchor = unit.prefixAnchor ?? "";
+      const suffixAnchor = unit.suffixAnchor ?? "";
+      if (typeof prefixAnchor !== "string" || typeof suffixAnchor !== "string") {
+        return unresolved("resolution_failed");
+      }
+      if (typeof unit.referentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(unit.referentRevision)) {
+        return unresolved("unknown_revision");
+      }
+      const referentBytes = await this.store.getBlob(unit.referentRevision);
+      if (!referentBytes) return unresolved("unknown_revision");
+      const outcome = relocateRegion({
+        snapshotBytes: snapshot.bytes,
+        parsedUnits: parsed?.status === "ok" ? parsed.units : [],
+        parsedOk: parsed?.status === "ok",
+        referentBytes,
+        prefixAnchor,
+        suffixAnchor,
+        parentSelector: unit.parentSelector ?? null,
+        relStart: unit.relativeStart ?? null,
+        relEnd: unit.relativeEnd ?? null,
+        prevStart: unit.startByte,
+        prevEnd: unit.endByte,
+      });
+      if (outcome.status === "ambiguous" || outcome.status === "invalidated") {
+        return unresolved(outcome.status === "ambiguous" ? "ambiguous" : "referent_missing");
+      }
       const parent = parsed?.status === "ok"
         ? parentForRange(parsed, outcome.startByte, outcome.endByte)
         : null;
@@ -421,21 +453,17 @@ export class FreshCtxSession {
         snapshot,
         range: { startByte: outcome.startByte, endByte: outcome.endByte },
         parent,
-        fingerprint: { prefixAnchor: unit.prefixAnchor, suffixAnchor: unit.suffixAnchor },
+        fingerprint: { prefixAnchor, suffixAnchor },
+        occurrence: unit.occurrence ?? 0,
       });
       candidate.id = unit.id;
+      candidate.occurrence = unit.occurrence ?? candidate.occurrence;
       candidate.relocation = outcome.status;
       candidate.previousRange = { startByte: unit.startByte, endByte: unit.endByte };
       await this.updateStoredUnit(candidate);
       return candidate;
-    } catch {
-      return unresolvedUnit({
-        id: unit.id,
-        sourcePath: unit.path,
-        kind: "region",
-        observedAt,
-        reason: "resolution_failed",
-      });
+    } catch (error) {
+      return unresolved(reasonFor(error));
     }
   }
 

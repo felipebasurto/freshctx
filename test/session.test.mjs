@@ -620,3 +620,35 @@ test("prepare refreshes several symbols from one file without changing commit fr
     (error) => error instanceof FreshCtxError && error.code === "stale_plan",
   );
 });
+
+test("a missing region fingerprint revision leaves a sibling observation preparable", async (t) => {
+  const regionSource = "RATE = 10\nOTHER = 1\n";
+  const siblingSource = "def ok():\n    return 1\n";
+  const root = await workspaceFor(t, { "a.py": regionSource, "b.py": siblingSource });
+  const session = await sessionFor(t, root);
+  const region = await session.observe({
+    resultId: "region",
+    path: "a.py",
+    content: content("RATE = 10"),
+    range: { startByte: 0, endByte: Buffer.byteLength("RATE = 10") },
+    turn: 1,
+  });
+  const sibling = await session.observe({
+    resultId: "ok",
+    path: "b.py",
+    content: content(siblingSource),
+    range: null,
+    turn: 1,
+  });
+  const stored = session.store.state.units[region.unit_id];
+  stored.referentRevision = "not-a-revision";
+  await session.store.save();
+  const plan = await session.prepare({
+    requestId: "both",
+    resultIds: ["region", "ok"],
+    budgetBytes: 4096,
+  });
+  assert.ok(plan.unresolved.some((entry) => entry.result_id === "region"));
+  assert.ok(plan.selected.includes(sibling.unit_id));
+  assert.match(decodedProjection(plan), /def ok/u);
+});

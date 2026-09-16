@@ -3,9 +3,12 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { relocateRegion } from "../src/relocate.mjs";
+import { anchorsFor, relocateRegion } from "../src/relocate.mjs";
 import { decodedProjection, sessionFor, workspaceFor, content } from "./helpers.mjs";
 import { decodeProjectionUnits } from "../src/projection.mjs";
+import { FreshCtxSession } from "../src/session.mjs";
+import { openSessionStore } from "../src/store.mjs";
+import { openWorkspace } from "../src/workspace.mjs";
 
 function bytes(text) {
   return Buffer.from(text, "utf8");
@@ -149,39 +152,30 @@ test("ambiguous duplicate anchors invalidate instead of choosing by offset", asy
   }
 });
 
-test("duplicate surrounding anchor resolves to the surviving identical span", async (t) => {
-  // Duplicate referent lines where one copy survives unchanged: exact bytes
-  // still exist, so relocation to identical bytes is safe (projection is
-  // byte-identical regardless of which copy is chosen).
+test("duplicate surrounding anchor updates the edited span instead of a surviving copy", async (t) => {
   const before = "HEAD = 0\nVALUE = 1\nMID = 0\nVALUE = 1\nTAIL = 9\n";
   const shown = "VALUE = 1";
   const start = Buffer.byteLength("HEAD = 0\n");
   const { root, session } = await observeRegion(t, before, shown, { startByte: start, endByte: start + Buffer.byteLength(shown) });
-  const { plan, text } = await prepareOne(session, root, "HEAD = 0\nVALUE = 9\nMID = 0\nVALUE = 1\nTAIL = 9\n");
-  assert.match(text, /VALUE = 1/u);
-  assert.doesNotMatch(text, /VALUE = 9\nMID = 0\nVALUE = 1/u, "must not merge both spans");
-  if (plan.selected.length > 0) {
-    assert.ok(["updated", "relocated", "stable"].includes(plan.unit_states[plan.selected[0]].status));
-  }
+  const { plan, unit, text } = await prepareOne(session, root, "HEAD = 0\nVALUE = 9\nMID = 0\nVALUE = 1\nTAIL = 9\n");
+  assert.equal(plan.selected.length, 1);
+  assert.equal(plan.unit_states[plan.selected[0]].status, "updated");
+  assert.match(unit.content, /VALUE = 9/u);
+  assert.doesNotMatch(text, /VALUE = 1/u, "must not jump to the unchanged duplicate");
 });
 
-test("duplicate surrounding anchor with both copies changed stays ambiguous or invalidated", async (t) => {
-  // Both copies changed so no exact bytes survive. The two candidate spans
-  // differ, so the engine must not guess between them. Python parses but the
-  // spans are plain assignments outside any symbol, so no structural parent
-  // scopes the choice.
+test("duplicate surrounding anchor with both copies changed does not pick the other copy", async (t) => {
   const before = "HEAD = 0\nSEC_A = 1\nVALUE = 1\nEND = 1\nSEC_A = 2\nVALUE = 1\nEND = 2\nTAIL = 9\n";
   const shown = "VALUE = 1";
   const start = Buffer.byteLength("HEAD = 0\nSEC_A = 1\n");
   const { root, session } = await observeRegion(t, before, shown, { startByte: start, endByte: start + Buffer.byteLength(shown) });
-  const { plan } = await prepareOne(session, root, "HEAD = 0\nSEC_A = 1\nVALUE = 9\nEND = 1\nSEC_A = 2\nVALUE = 2\nEND = 2\nTAIL = 9\n");
+  const { plan, text } = await prepareOne(session, root, "HEAD = 0\nSEC_A = 1\nVALUE = 9\nEND = 1\nSEC_A = 2\nVALUE = 2\nEND = 2\nTAIL = 9\n");
   if (plan.selected.length === 0) {
     assert.ok(plan.unresolved.some((entry) => entry.reason === "referent_missing" || entry.reason === "ambiguous"));
-  } else {
-    const state = plan.unit_states[plan.selected[0]];
-    assert.ok(state.status === "updated" || state.status === "relocated");
-    assert.match(decodedProjection(plan), /VALUE = (9|2)/u);
+    return;
   }
+  assert.match(text, /VALUE = 9/u);
+  assert.doesNotMatch(text, /VALUE = 2/u);
 });
 
 test("deleted referent invalidates instead of projecting ghost bytes", async (t) => {
@@ -317,4 +311,64 @@ test("relocateRegion reports ambiguous when anchors bracket distinct spans", () 
     prevEnd: 3,
   });
   assert.ok(["ambiguous", "invalidated"].includes(outcome.status));
+});
+
+test("relocateRegion updates the original span instead of an exact duplicate", () => {
+  const snapshotBytes = bytes("HEAD = 0\nVALUE = 9\nMID = 0\nVALUE = 1\nTAIL = 9\n");
+  const prevStart = Buffer.byteLength("HEAD = 0\n");
+  const prevEnd = prevStart + Buffer.byteLength("VALUE = 1");
+  const original = bytes("HEAD = 0\nVALUE = 1\nMID = 0\nVALUE = 1\nTAIL = 9\n");
+  const anchors = anchorsFor(original, prevStart, prevEnd);
+  const outcome = relocateRegion({
+    snapshotBytes,
+    parsedUnits: [],
+    parsedOk: true,
+    referentBytes: bytes("VALUE = 1"),
+    prefixAnchor: anchors.prefixAnchor,
+    suffixAnchor: anchors.suffixAnchor,
+    parentSelector: null,
+    relStart: null,
+    relEnd: null,
+    prevStart,
+    prevEnd,
+  });
+  assert.equal(outcome.status, "updated");
+  assert.deepEqual([outcome.startByte, outcome.endByte], [prevStart, prevEnd]);
+  assert.equal(snapshotBytes.subarray(outcome.startByte, outcome.endByte).toString("utf8"), "VALUE = 9");
+});
+
+test("identical region fingerprints at different offsets keep distinct identities after reopen", async (t) => {
+  const pad = `# ${"Y".repeat(125)}\n`;
+  assert.equal(Buffer.byteLength(pad), 128);
+  const shown = "VALUE = 1";
+  const before = `${pad}${shown}\n${pad}${shown}\n${pad}`;
+  const firstStart = Buffer.byteLength(pad);
+  const secondStart = Buffer.byteLength(`${pad}${shown}\n${pad}`);
+  const root = await workspaceFor(t, { "f.py": before });
+  const workspace = await openWorkspace(root);
+  const firstStore = await openSessionStore(workspace, "dup-id");
+  const first = new FreshCtxSession({ workspace, store: firstStore, sessionId: "dup-id" });
+  const observedA = await first.observe({
+    resultId: "a",
+    path: "f.py",
+    content: content(shown),
+    range: { startByte: firstStart, endByte: firstStart + Buffer.byteLength(shown) },
+    turn: 1,
+  });
+  const observedB = await first.observe({
+    resultId: "b",
+    path: "f.py",
+    content: content(shown),
+    range: { startByte: secondStart, endByte: secondStart + Buffer.byteLength(shown) },
+    turn: 1,
+  });
+  assert.notEqual(observedA.unit_id, observedB.unit_id);
+  await firstStore.close();
+  const secondStore = await openSessionStore(workspace, "dup-id");
+  t.after(async () => secondStore.close());
+  const second = new FreshCtxSession({ workspace, store: secondStore, sessionId: "dup-id" });
+  const plan = await second.prepare({ requestId: "both", resultIds: ["a", "b"], budgetBytes: 4096 });
+  assert.ok(plan.selected.includes(observedA.unit_id));
+  assert.ok(plan.selected.includes(observedB.unit_id));
+  assert.notDeepEqual(plan.unit_states[observedA.unit_id].currentRange, plan.unit_states[observedB.unit_id].currentRange);
 });
