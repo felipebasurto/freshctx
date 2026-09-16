@@ -72,13 +72,14 @@ export async function serveJsonLines({ input, output, handle, maxLineBytes = MAX
     }
     let newline;
     while ((newline = buffered.indexOf("\n")) !== -1) {
-      const line = buffered.slice(0, newline).trim();
+      const frame = buffered.slice(0, newline);
       buffered = buffered.slice(newline + 1);
-      if (line.length === 0) continue;
-      if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
+      if (Buffer.byteLength(frame, "utf8") > maxLineBytes) {
         await emitTooLarge();
         continue;
       }
+      const line = frame.trim();
+      if (line.length === 0) continue;
       await writeResponse(line, output, handle);
     }
     if (discarding || buffered.includes("\n")) return;
@@ -93,10 +94,11 @@ export async function serveJsonLines({ input, output, handle, maxLineBytes = MAX
   }
   const tail = decoder.end();
   if (tail) await take(tail);
-  if (discarding || buffered.trim().length === 0) return;
-  if (Buffer.byteLength(buffered.trim(), "utf8") > maxLineBytes) {
+  if (discarding) return;
+  if (Buffer.byteLength(buffered, "utf8") > maxLineBytes) {
     await emitTooLarge();
     return;
   }
+  if (buffered.trim().length === 0) return;
   await writeResponse(buffered.trim(), output, handle);
 }

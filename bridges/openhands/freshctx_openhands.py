@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import threading
+import queue
+import time
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -133,39 +136,75 @@ class Client:
         self.timeout_s = timeout_ms / 1000
         self.sequence = 0
         self.lock = threading.Lock()
+        self.failure: Exception | None = None
         if self.child.stdin is None or self.child.stdout is None:
             raise RuntimeError("FreshCtx child missing stdio")
 
     def request(self, op: str, fields: dict[str, Any] | None = None) -> Any:
-        with self.lock:
+        deadline = time.monotonic() + self.timeout_s
+        if not self.lock.acquire(timeout=self.timeout_s):
+            self._fail(RuntimeError("FreshCtx request timed out"))
+            raise self.failure
+        try:
+            if self.failure is not None:
+                raise self.failure
             self.sequence += 1
             ident = str(self.sequence)
             payload = {**(fields or {}), "protocol": PROTOCOL, "id": ident, "op": op}
-            assert self.child.stdin is not None
-            self.child.stdin.write(json.dumps(payload) + "\n")
-            self.child.stdin.flush()
-            assert self.child.stdout is not None
-            line = self.child.stdout.readline()
-            if not line:
-                raise RuntimeError("FreshCtx process exited")
-            reply = json.loads(line)
-            if reply.get("protocol") != PROTOCOL or not isinstance(reply.get("ok"), bool) or reply.get("id") != ident:
-                raise RuntimeError("Invalid FreshCtx response")
+            completed: queue.Queue = queue.Queue(maxsize=1)
+
+            def exchange():
+                try:
+                    self.child.stdin.write(json.dumps(payload) + "\n")
+                    self.child.stdin.flush()
+                    line = self.child.stdout.readline()
+                    if not line:
+                        raise RuntimeError("FreshCtx process exited")
+                    reply = json.loads(line)
+                    if not isinstance(reply, dict) or reply.get("protocol") != PROTOCOL or not isinstance(reply.get("ok"), bool) or reply.get("id") != ident:
+                        raise RuntimeError("Invalid FreshCtx response")
+                    completed.put((reply, None))
+                except Exception as error:
+                    completed.put((None, error))
+
+            worker = threading.Thread(target=exchange, daemon=True)
+            worker.start()
+            try:
+                reply, error = completed.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty:
+                self._fail(RuntimeError("FreshCtx request timed out"))
+                worker.join(timeout=1)
+                raise self.failure
+            if error is not None:
+                self._fail(RuntimeError(f"FreshCtx transport failed: {error}"))
+                raise self.failure
+            if self.failure is not None:
+                raise self.failure
             if not reply["ok"]:
                 error = reply.get("error") or {}
                 raise RuntimeError(error.get("message") or "FreshCtx rejected request")
             return reply.get("result")
+        finally:
+            self.lock.release()
+
+    def _fail(self, error: Exception) -> None:
+        if self.failure is None:
+            self.failure = error
+        if self.child.poll() is None:
+            self.child.kill()
 
     def close(self) -> None:
-        if self.child.stdin:
-            self.child.stdin.close()
-        if self.child.stdout:
-            self.child.stdout.close()
+        self._fail(RuntimeError("FreshCtx client closed"))
         try:
             self.child.wait(timeout=1)
         except subprocess.TimeoutExpired:
             self.child.kill()
             self.child.wait(timeout=1)
+        with self.lock:
+            if self.child.stdin:
+                self.child.stdin.close()
+            if self.child.stdout:
+                self.child.stdout.close()
 
 
 class Bridge:
@@ -177,18 +216,23 @@ class Bridge:
         enabled: bool = True,
         client: Client | None = None,
         on_audit: Callable[[dict[str, Any]], None] | None = None,
+        timeout_ms: int = 10000,
     ) -> None:
         self.root = root
         self.budget_bytes = budget_bytes
         self.enabled = enabled
         self.on_audit = on_audit
-        self.client = (client or Client(root)) if enabled else None
+        self.client = (client or Client(root, timeout_ms=timeout_ms)) if enabled else None
         if self.client is not None:
-            self.client.request("hello", {
-                "session_id": session_id,
-                "adapter": ADAPTER,
-                "capabilities": CAPABILITIES,
-            })
+            try:
+                self.client.request("hello", {
+                    "session_id": session_id,
+                    "adapter": ADAPTER,
+                    "capabilities": CAPABILITIES,
+                })
+            except Exception:
+                self.client.close()
+                raise
 
     def observe(self, result_id: str, path: str, text: str, start_byte: int | None = None, end_byte: int | None = None) -> None:
         if not self.enabled:
@@ -280,7 +324,7 @@ def wrap_llm(llm: Any, bridge: Bridge) -> Any:
         async def async_completion(messages=None, **kwargs):
             payload = messages if messages is not None else kwargs.get("messages")
             request = as_request(payload if payload is not None else {"messages": kwargs.get("messages")})
-            rewritten = bridge.rewrite(request)
+            rewritten = await asyncio.to_thread(bridge.rewrite, request)
             if messages is not None:
                 return await original_async(rewritten["messages"], **kwargs)
             kwargs = {**kwargs, "messages": rewritten["messages"]}

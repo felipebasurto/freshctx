@@ -65,12 +65,14 @@ test("opening v1 state migrates a provable unit and keeps its recover alias", as
   const root = await workspaceFor(t, { "a.py": source });
   const first = await opened(root, "migrate-file");
   const observed = await first.session.observe({ resultId: "read", path: "a.py", content: content(source), range: null, turn: 1 });
+  const oldPlan = await first.session.prepare({ requestId: "old", resultIds: ["read"], budgetBytes: 4096 });
   await saveAsV1(first.store);
   await first.store.close();
 
   const second = await opened(root, "migrate-file");
   t.after(() => second.store.close());
   assert.equal(second.store.state.version, 2);
+  await assert.rejects(second.session.commit({ planId: oldPlan.plan_id }), { code: "unknown_plan" });
   const migratedId = second.store.state.observations.read.unitId;
   const legacyId = observed.unit_id.slice(0, 8);
   assert.match(migratedId, /^[a-f0-9]{24}$/u);

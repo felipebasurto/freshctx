@@ -106,6 +106,7 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
   }
   const unique = [...new Map(spans.map(([start, end]) => [`${start}:${end}`, [start, end]])).values()];
   if (unique.length === 0) return { status: "none" };
+  if (new Set(unique.map(([start]) => start)).size > 1) return { status: "ambiguous" };
   const contents = unique.map(([start, end]) => snapshotBytes.subarray(start, end));
   if (contents.every((span) => span.equals(contents[0]))) {
     return { status: "unique", startByte: unique[0][0], endByte: unique[0][1] };
@@ -242,6 +243,8 @@ export function relocateRegion(input) {
     relEnd = null,
     prevStart,
     prevEnd,
+    snapshotUnchanged = false,
+    previousOccurrences = null,
   } = input;
   const inBounds = (start, end) =>
     Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && end <= snapshotBytes.length;
@@ -256,12 +259,40 @@ export function relocateRegion(input) {
   const similarEnough = (start, end) =>
     byteBigramSimilarity(decode(snapshotBytes.subarray(start, end)), decode(referentBytes)) >= SIMILARITY_THRESHOLD;
 
-  // 1. Unmoved and unchanged.
-  if (matchesReferent(prevStart, prevEnd)) {
+  // A matching offset proves occurrence identity only in the same snapshot.
+  if (snapshotUnchanged && matchesReferent(prevStart, prevEnd)) {
     return { status: "stable", startByte: prevStart, endByte: prevEnd };
   }
 
   let ambiguous = false;
+  const occurrences = findByteOccurrences(snapshotBytes, referentBytes);
+
+  // Resolve the observed surroundings before searching for surviving old
+  // bytes. Otherwise an edited occurrence can jump to an unchanged sibling.
+  const bracketed = bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBytes, decode(referentBytes));
+  if (bracketed.status === "unique" && sameParent(bracketed.startByte, bracketed.endByte)
+    && similarEnough(bracketed.startByte, bracketed.endByte)) {
+    if (previousOccurrences === 1 && occurrences.length === 1
+      && occurrences[0] >= bracketed.startByte
+      && occurrences[0] + referentBytes.length <= bracketed.endByte) {
+      const start = occurrences[0];
+      return { status: start === prevStart ? "stable" : "relocated", startByte: start, endByte: start + referentBytes.length };
+    }
+    const unchanged = matchesReferent(bracketed.startByte, bracketed.endByte);
+    return {
+      status: unchanged ? (bracketed.startByte === prevStart ? "stable" : "relocated") : "updated",
+      startByte: bracketed.startByte,
+      endByte: bracketed.endByte,
+    };
+  }
+
+  // Similarity and offsets cannot distinguish repeated occurrences after an
+  // edit. Missing legacy multiplicity is also insufficient evidence.
+  if (previousOccurrences !== 1 || occurrences.length > 1) return { status: "ambiguous" };
+
+  if (matchesReferent(prevStart, prevEnd) && sameParent(prevStart, prevEnd)) {
+    return { status: "stable", startByte: prevStart, endByte: prevEnd };
+  }
 
   // 2. Structural parent moved; same referent at translated offsets.
   if (parentSelector !== null && Number.isInteger(relStart) && Number.isInteger(relEnd)) {
@@ -277,9 +308,7 @@ export function relocateRegion(input) {
     }
   }
 
-  // 3. Exact referent bytes elsewhere. Identical bytes project identically, so
-  // multiplicity is benign; anchor-consistent surroundings pick the placement.
-  const occurrences = findByteOccurrences(snapshotBytes, referentBytes);
+  // 3. A unique unchanged referent; never choose among identical siblings.
   if (occurrences.length > 0) {
     const storedPrefix = Buffer.from(prefixAnchor, "base64");
     const storedSuffix = Buffer.from(suffixAnchor, "base64");
@@ -291,15 +320,7 @@ export function relocateRegion(input) {
     return { status: "relocated", startByte: at, endByte: at + referentBytes.length };
   }
 
-  // 4. Anchors bracket exactly one span whose content changed but stays similar.
-  const bracketed = bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBytes, decode(referentBytes));
-  if (bracketed.status === "unique") {
-    if (sameParent(bracketed.startByte, bracketed.endByte) && similarEnough(bracketed.startByte, bracketed.endByte)) {
-      return { status: "updated", startByte: bracketed.startByte, endByte: bracketed.endByte };
-    }
-  } else if (bracketed.status === "ambiguous") {
-    ambiguous = true;
-  }
+  if (bracketed.status === "ambiguous") ambiguous = true;
 
   // 5. Same span, intact surroundings, similar changed content (same-length edits).
   if (inBounds(prevStart, prevEnd)) {

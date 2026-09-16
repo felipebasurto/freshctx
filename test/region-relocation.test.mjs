@@ -149,16 +149,14 @@ test("ambiguous duplicate anchors invalidate instead of choosing by offset", asy
   }
 });
 
-test("duplicate surrounding anchor resolves to the surviving identical span", async (t) => {
-  // Duplicate referent lines where one copy survives unchanged: exact bytes
-  // still exist, so relocation to identical bytes is safe (projection is
-  // byte-identical regardless of which copy is chosen).
+test("duplicate surrounding anchor refreshes the observed occurrence, not its sibling", async (t) => {
   const before = "HEAD = 0\nVALUE = 1\nMID = 0\nVALUE = 1\nTAIL = 9\n";
   const shown = "VALUE = 1";
   const start = Buffer.byteLength("HEAD = 0\n");
   const { root, session } = await observeRegion(t, before, shown, { startByte: start, endByte: start + Buffer.byteLength(shown) });
   const { plan, text } = await prepareOne(session, root, "HEAD = 0\nVALUE = 9\nMID = 0\nVALUE = 1\nTAIL = 9\n");
-  assert.match(text, /VALUE = 1/u);
+  assert.doesNotMatch(text, /VALUE = 1/u);
+  assert.ok(plan.selected.length === 0 || text.includes("VALUE = 9"));
   assert.doesNotMatch(text, /VALUE = 9\nMID = 0\nVALUE = 1/u, "must not merge both spans");
   if (plan.selected.length > 0) {
     assert.ok(["updated", "relocated", "stable"].includes(plan.unit_states[plan.selected[0]].status));
@@ -295,6 +293,7 @@ test("relocateRegion never returns stale absolute offsets for shifted bytes", ()
     relEnd: null,
     prevStart: 0,
     prevEnd: 9,
+    previousOccurrences: 1,
   });
   assert.equal(outcome.status, "relocated");
   assert.deepEqual([outcome.startByte, outcome.endByte], [9, 18]);

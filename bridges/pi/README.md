@@ -8,7 +8,7 @@ copy of the final Chat Completions request. It does not modify saved Pi history.
 
 ## Private checkout setup
 
-Development lives here in the private product repository. The former
+Development lives in this product checkout. The former
 freshctx-pi repository and v0.1.0 tag are historical snapshots. npm publication
 is disabled. With repository access, run from the product checkout:
 
@@ -52,22 +52,22 @@ Missing code, duplicate function bodies, stale code, or a failed resume fail the
 check. Both arms make three HTTP requests. The fixture reports serialized request
 bytes; these are not billed tokens or a cost estimate.
 
-This runs in `npm test` and the product's `npm run verify`. It proves the saved
+This runs in `npm test --prefix bridges/pi`. It proves the saved
 session and HTTP path with a deterministic code consumer, not model reasoning,
 a separate Pi process restart, or compaction-summary freshness. No provider
 credentials are needed. Frozen benchmark reports remain separate.
 
 ## Boundaries and failure behavior
 
-- Only this extension's `read` results are tracked. Bash, grep, previous native
-  reads, user quotes, assistant text, and compacted summaries are not refreshed.
+- Only this extension's `read` results are tracked. Bash, grep, user quotes, assistant text, and compacted summaries are not refreshed.
 - Reads default to 200 lines and accept `offset` and `limit`. They preserve
   UTF-8 byte offsets and internal CRLFs, excluding terminal line separators.
   Symlinks, paths outside the workspace, non-UTF-8 files, images, and files
   over 512 KiB fail closed without returning source content.
 - A header read stays a region. It does not establish that unread functions
-  are absent. Use another ranged read to inspect later code. Regions remain
-  byte ranges; edits that move their meaning require a new read. Unique
+  are absent. Use another ranged read to inspect later code. Region relocation uses byte anchors and text similarity; ambiguous mappings
+  require a new read. A declaration read can widen to its whole function, and
+  failed symbol resolution can widen to a whole file. Unique
   functions and methods use Tree-sitter identity instead.
 - The live projection has a 128 KiB budget. Omitted or deleted code gets an
   unavailable marker. Old bodies are never substituted as current code.
@@ -78,11 +78,14 @@ credentials are needed. Frozen benchmark reports remain separate.
   history, or rejected commit, this bridge cancels the active request with
   `ctx.abort()` before discarding the plan. It displays **FreshCtx blocked**
   and writes the warning to stderr. Real Pi HTTP tests verify that an altered
-  result and a dead child cancel the turn without dispatching the rejected
+  result, a dead child, and lost state on resume cancel the turn without dispatching the rejected
   request. Custom SDK hosts that replace Pi's abort handler must preserve
   cancellation. Other extensions must not rewrite requests after this bridge.
 - Resume uses Pi's session ID and FreshCtx's persisted observations. Session
   shutdown closes stdin and releases the child process's workspace lock.
+  Changing the session ID or workspace restarts the child. Successful native
+  reads without saved observations block dispatch; known failed reads use
+  trusted Pi error metadata and may pass through.
 
 FreshCtx keeps historical source in `.freshctx/`. Run `freshctx clean` when it
 is no longer needed. Read the product [security policy](https://github.com/felipebasurto/freshctx/blob/main/SECURITY.md).
@@ -94,15 +97,5 @@ reads, duplicate IDs, altered results, deleted files, a zero-byte budget,
 symlinks, traversal, stale commits, resume, and child timeouts. Scores from
 [freshctx-bench](https://github.com/felipebasurto/freshctx-bench) belong to its
 frozen fixtures and are not scores for this Pi integration.
-
-## Product PCR pointer
-
-Product PCR `0001` (2026-09-06): projection frames use `Nbytes` so a trailing
-integer cannot be read as a Pi line offset. See [docs/pcr/0001-projection-byte-length-cue.md](../../docs/pcr/0001-projection-byte-length-cue.md)
-and [docs/pcr/INDEX.md](../../docs/pcr/INDEX.md).
-
-Living-suite PCR numbers stay in the research repository
-`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs into this
-package.
 
 MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).

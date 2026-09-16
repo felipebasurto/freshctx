@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 
-export async function runDemo({ failure = null, resume = false } = {}) {
+export async function runDemo({ failure = null, resume = false, missingState = false } = {}) {
   assert.ok(!failure || !resume, 'Failure and resume fixtures are separate');
   const sourcePath = resume ? 'price.js' : 'price.py';
   const oldSource = resume
@@ -53,7 +53,7 @@ export async function runDemo({ failure = null, resume = false } = {}) {
   });
   const outcomes = {};
   try {
-    for (const enabled of failure ? [true] : [false, true]) {
+    for (const enabled of failure || missingState ? [true] : [false, true]) {
       turn = 0;
       captured.length = 0;
       await writeFile(join(root, sourcePath), oldSource);
@@ -104,11 +104,17 @@ export async function runDemo({ failure = null, resume = false } = {}) {
         }
         await writeFile(join(root, sourcePath), currentSource);
         if (resume) {
+          if (missingState) await rm(join(root, '.freshctx'), { recursive: true });
           const reopened = SessionManager.open(manager.getSessionFile());
           assert.equal(reopened.getSessionId(), manager.getSessionId());
           session = await openSession(reopened);
         }
         await session.prompt(resume ? 'Using the available function, compute total(3).' : 'Inspect the code context already available.');
+        if (missingState) {
+          assert.equal(captured.length, 2, 'Untracked saved read must never reach resumed HTTP dispatch');
+          assert.equal(session.messages.at(-1).stopReason, 'aborted');
+          return { rejectedRequestSent: false, stopReason: 'aborted' };
+        }
         assert.equal(captured.length, 3);
         const outgoing = JSON.stringify(captured.at(-1).messages);
         if (resume) {

@@ -61,6 +61,17 @@ test('changed and duplicate native results reject the whole plan without mutatio
   duplicate.messages.push(duplicate.messages[1]);
   await assert.rejects(bridge.rewrite(duplicate), /duplicate tool result/);
 });
+test('an unknown successful read blocks rewriting, while other tool results survive', async t => {
+  const { bridge } = await fixture(t);
+  const original = request('RATE = 10');
+  await assert.rejects(bridge.rewrite(original), /no observation for a native read/);
+  assert.equal(original.messages[1].content, 'RATE = 10');
+  const nonRead = request('test output');
+  nonRead.messages[0].tool_calls[0].function.name = 'bash';
+  assert.deepEqual(await bridge.rewrite(nonRead), nonRead);
+  const failed = request('file not found');
+  assert.deepEqual(await bridge.rewrite(failed, { failedReadIds: ['read_1'] }), failed);
+});
 test('budget and deletion replace historical bodies with unavailable markers', async t => {
   const { root, bridge } = await fixture(t);
   const read = await bridge.read('read_1', { path: 'price.py' });

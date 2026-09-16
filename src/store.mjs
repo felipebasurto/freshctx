@@ -286,6 +286,13 @@ function validateSessionV2(state, sessionId) {
   validateSessionHeader(state, sessionId, SESSION_SCHEMA_VERSION);
   state.aliases = normalizeRecord(state.aliases, "session unit aliases");
   for (const [unitId, unit] of Object.entries(state.units)) {
+    // Early v2 writes omitted identity on unavailable files. Reconstruct only
+    // when the path independently hashes to the stored id.
+    if (isRecord(unit) && unit.kind === "file" && unit.state === "unresolved"
+      && !Object.hasOwn(unit, "identity") && typeof unit.path === "string"
+      && compactUnitId(fileUnitIdentity(unit.path)) === unitId) {
+      unit.identity = fileUnitIdentity(unit.path);
+    }
     if (!/^[a-f0-9]{24}$/u.test(unitId) || !isRecord(unit) || unit.id !== unitId
       || !isRecord(unit.identity) || compactUnitId(unit.identity) !== unitId) {
       fail("state_corrupt", "FreshCtx session unit identity is invalid");
@@ -446,8 +453,10 @@ function migrateSessionV1(state) {
     observations,
     units,
     aliases,
-    pendingPlans: state.pendingPlans,
-    committedPlans: state.committedPlans,
+    // Plans contain old markers and may include quarantined identities.
+    // Retain the archive, but require a new prepare under the migrated state.
+    pendingPlans: Object.create(null),
+    committedPlans: Object.create(null),
     sequence: state.sequence,
   };
 }

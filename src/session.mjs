@@ -5,13 +5,12 @@ import {
   fileUnitIdentity,
   regionUnitIdentity,
   revisionFor,
-  sha256,
   stableId,
   symbolUnitIdentity,
 } from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
 import { VERSION } from "./protocol.mjs";
-import { anchorsFor, ANCHOR_BYTES, enclosingParsedUnit, relocateRegion } from "./relocate.mjs";
+import { anchorsFor, enclosingParsedUnit, findByteOccurrences, relocateRegion } from "./relocate.mjs";
 import { parseUnits, supportedLanguages, uniqueUnitForRange } from "./treesitter.mjs";
 import { DEFAULT_MAX_SOURCE_BYTES, normalizeRelativePath, readStableText } from "./workspace.mjs";
 
@@ -82,6 +81,7 @@ function appendRevision(unit, revision) {
 function unresolvedUnit({ id, sourcePath, kind, selector = null, observedAt, reason }) {
   return {
     id,
+    ...(kind === "file" ? { identity: fileUnitIdentity(sourcePath) } : {}),
     path: sourcePath,
     kind,
     selector,
@@ -134,6 +134,12 @@ function resolvedRegion({
     anchors.suffixAnchor,
     parent?.selector ?? null,
   );
+  const occurrences = findByteOccurrences(snapshot.bytes, bytes);
+  const repeatedFingerprint = occurrences.filter(start => {
+    const candidate = anchorsFor(snapshot.bytes, start, start + bytes.length);
+    return candidate.prefixAnchor === anchors.prefixAnchor && candidate.suffixAnchor === anchors.suffixAnchor;
+  }).length > 1;
+  if (repeatedFingerprint) identity.occurrenceStart = range.startByte;
   return {
     id: compactUnitId(identity),
     identity,
@@ -146,6 +152,7 @@ function resolvedRegion({
     sourceRevision: revisionFor(snapshot.bytes),
     revision,
     referentRevision: revision,
+    referentOccurrences: occurrences.length,
     startByte: range.startByte,
     endByte: range.endByte,
     ...lineRangeForByteSpan(snapshot.bytes, range.startByte, range.endByte),
@@ -405,7 +412,9 @@ export class FreshCtxSession {
   }
 
   async currentRegion(unit, snapshot, observedAt, parsed = null) {
-    const referentBytes = await this.store.getBlob(unit.referentRevision ?? "");
+    const referentBytes = /^sha256:[a-f0-9]{64}$/u.test(unit.referentRevision ?? "")
+      ? await this.store.getBlob(unit.referentRevision)
+      : null;
     if (!referentBytes) {
       return unresolvedUnit({
         id: unit.id,
@@ -427,6 +436,8 @@ export class FreshCtxSession {
       relEnd: unit.relativeEnd ?? null,
       prevStart: unit.startByte,
       prevEnd: unit.endByte,
+      snapshotUnchanged: unit.sourceRevision === revisionFor(snapshot.bytes),
+      previousOccurrences: unit.referentOccurrences ?? null,
     });
     if (outcome.status === "ambiguous" || outcome.status === "invalidated") {
       return unresolvedUnit({

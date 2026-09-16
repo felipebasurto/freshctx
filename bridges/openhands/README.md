@@ -1,69 +1,39 @@
-# FreshCtx for OpenHands
+# OpenHands integration prototype
 
-Request-rewriting bridge so [OpenHands](https://docs.openhands.dev/) can run
-the same model and tools with versus without FreshCtx. It speaks `freshctx/1`
-to a persistent local child, observes exact workspace UTF-8 reads, and
-transforms a copy of the final Chat Completions-shaped message list.
+This directory contains Node and Python clients for FreshCtx and an LLM-call
+wrapper intended for OpenHands. Tests exercise Chat Completions-shaped request
+fixtures. **They do not instantiate a pinned OpenHands agent or its real
+summarizing condenser.** Actual host integration remains to be validated.
 
-OpenHands is the preferred live harness: a real agent plus
-`LLMSummarizingCondenser`. This package does not pin or vendor OpenHands.
-Scores, SWE-bench matrices, and dollar figures belong in
-[freshctx-bench](https://github.com/felipebasurto/freshctx-bench), not here.
+The intended order is: build and condense the host's message copy, rewrite it
+with FreshCtx, then dispatch it. Saved events remain unchanged. A source fact
+inside a condenser summary is not refreshed; observations absent from the
+outgoing copy are inactive until read again.
 
-## Compose order
+## Run the fixtures
 
-`condense_then_freshctx`:
-
-1. OpenHands builds native history and runs `LLMSummarizingCondenser` on the
-   event view (`View.from_events()` then `events_to_messages()`).
-2. FreshCtx rewrites only that already-condensed **model-bound copy**.
-3. Still-present observed tool results become markers. One current projection
-   is appended as a final user message.
-4. Forgotten observations stay inactive until the host reads them again.
-   Condenser summaries are not refreshed.
-
-The projection is inserted after condensation so it is eligible and is not
-summarized away. Saved OpenHands events are not rewritten. Tree-sitter stays
-on in the sidecar; this bridge does not replace it.
-
-Do not run another final-request rewriter after this one. Do not persist the
-rewritten copy back into the event log.
-
-## Private checkout setup
-
-npm publication is disabled. From the product checkout:
+From the product checkout:
 
 ```sh
 npm ci --prefix bridges/openhands
 npm run check --prefix bridges/openhands
 npm test --prefix bridges/openhands
 npm run demo --prefix bridges/openhands
-python3 bridges/openhands/test/test_hook.py
 ```
 
-The bridge depends on the product at `file:../..`. The root package stays
-independent of OpenHands. HTTP and LLM credentials are not required.
+No model credentials are needed. The package depends on the local product at
+`file:../..`; npm publication is disabled.
 
-## Config flags
+## Integrate a host
 
-| Flag | Meaning |
-| --- | --- |
-| `FRESHCTX_ENABLED` | `0`/`false` is the without arm (pass-through). Unset or any other value enables FreshCtx. |
-| `FRESHCTX_ROOT` | Workspace root shared with `freshctx serve --stdio --root`. |
-| `FRESHCTX_SESSION_ID` | Stable OpenHands conversation / session id. |
-| `FRESHCTX_BUDGET_BYTES` | Projection budget. Default `131072`. |
-| `FRESHCTX_TIMEOUT_MS` | JSONL child timeout. Default `10000`. |
-| `FRESHCTX_AUDIT` | When `1`, emit stale-versus-current audit records. |
-| `FRESHCTX_FALL_OPEN` | Rejected. A failed plan must cancel dispatch. |
-
-CLI contract is the product sidecar: `freshctx init`, `freshctx serve --stdio`,
-`freshctx clean`. `stdout` is JSONL; diagnostics go to `stderr`.
-
-## Wire OpenHands
-
-Use the exact-byte reader this bridge exposes, not a numbered `cat -n` dump.
-Stock FileEditor `view` output is not an observation unless it is re-emitted
-as the exact UTF-8 range.
+The Node `Bridge.read` reader returns exact UTF-8 source bytes with native
+result IDs. Python exposes `Bridge.observe`; its host must supply the exact
+text and byte range returned by its own reader.
+Numbered editor output is not an exact source observation. After the host has
+built its outgoing messages, call `Bridge.rewrite` or install the Python
+`wrap_llm` wrapper on an object exposing `completion` / `async_completion`.
+The wrapper's placement after condensation is a host integration responsibility,
+not something the wrapper can establish by itself.
 
 ```python
 from freshctx_openhands import Bridge, config_from_env, wrap_llm
@@ -73,67 +43,47 @@ bridge = Bridge(
     root=cfg["root"],
     session_id=cfg["session_id"] or conversation_id,
     budget_bytes=cfg["budget_bytes"],
+    timeout_ms=cfg["timeout_ms"],
     enabled=cfg["enabled"],
 )
-# After a successful exact file read, and after the condenser built messages:
 wrap_llm(agent.llm, bridge)
+# After each successful exact read, register its result with bridge.observe(...).
+# Close bridge when the conversation ends.
 ```
 
-`wrap_llm` intercepts `completion` / `async_completion` **after** condensation.
-If prepare, hash check, or commit fails, it raises and must not send the
-original request. That is not Hermes-style fall-open.
+The host must check coverage of successful source reads: unknown tool results
+are allowed for unrelated tools, and this generic bridge cannot infer every
+OpenHands source-reading tool. Do not resume an old conversation after losing
+FreshCtx state and assume that its original source results have been refreshed.
+See the complete [integration contract](../../docs/protocol.md).
 
-Node hosts can call `Bridge.read` / `Bridge.rewrite` directly on a
-`{ messages }` payload. `read` accepts Pi-style `offset`/`limit` or OpenHands
-`view_range: [start, end]` (`end: -1` means EOF).
+## Configuration
 
-## Audit hooks
+| Variable | Meaning |
+| --- | --- |
+| `FRESHCTX_ENABLED` | `0` or `false` selects pass-through; otherwise enabled. |
+| `FRESHCTX_ROOT` | Workspace shared with the sidecar. |
+| `FRESHCTX_SESSION_ID` | Stable host conversation ID. |
+| `FRESHCTX_BUDGET_BYTES` | Projection byte budget; default 131072. |
+| `FRESHCTX_TIMEOUT_MS` | Child request deadline; default 10000 ms. |
+| `FRESHCTX_FALL_OPEN` | Enabling it is rejected. |
 
-`Bridge` accepts `onAudit`. Each rewrite reports:
+`FRESHCTX_AUDIT` is parsed for callers; it does not enable logging by itself.
+Python accepts `on_audit`, reporting compose order, enabled state, and whether
+a projection was inserted. Detailed stale/current/unread presence checks belong
+to the demo fixture, not the bridge.
 
-- `compose_order` (`condense_then_freshctx`)
-- `enabled`
-- `original` / `rewritten` presence of caller-supplied `stale`, `current`, and
-  `unread` snippets
-- `historical_results_replaced`
-- `projection_inserted`
-- `forgotten_result_ids` when the condensed copy still carries them
+The Node reader accepts `offset` / `limit` or `view_range: [start, end]`, with `-1`
+meaning EOF. It defaults to 200 lines and rejects symlinks, traversal,
+non-UTF-8 input, and files larger than 512 KiB. A declaration read can widen
+to its whole function; fallback resolution can widen to a whole file.
 
-`npm run demo` and `npm test` run a paired with/without fixture: a two-line
-header read, then `RATE` changes from 10 to 20. Without FreshCtx the model-bound
-request still contains `RATE = 10`. With FreshCtx it contains current
-`RATE = 20` and not the unread function. A second demo arm condenses the
-historical read into a summary; the summary stays stale until a new exact read.
+A rejected plan raises and must cancel dispatch. Python deadlines cover lock
+acquisition, writing, and reading; timeout stops the child and invalidates the
+client so a late response cannot satisfy a later call. The asynchronous wrapper
+performs sidecar work in a worker thread. Commit detects changed selected files,
+but does not hold a workspace lock through the provider call.
 
-This is request-level evidence, not model accuracy, Pass@1, or a cost claim.
-
-## Boundaries and failure behavior
-
-- Only exact UTF-8 workspace reads this bridge observed are refreshed.
-  Bash, grep, numbered dumps, user quotes, assistant text, and condenser
-  summaries are not refreshed.
-- Reads default to 200 lines. They preserve UTF-8 byte offsets and internal
-  CRLFs, excluding terminal line separators. Symlinks, paths outside the
-  workspace, non-UTF-8 files, images, and files over 512 KiB fail closed.
-- A header read stays a region. Unread functions are omitted and are not
-  evidence of absence. Unique functions and methods use Tree-sitter identity.
-- The live projection has a 128 KiB budget unless overridden. Omitted or
-  deleted code gets an unavailable marker. Old bodies are never substituted
-  as current code.
-- Native tool IDs and replacement hashes must match. The projection hash is
-  checked, the copy is prepared atomically, and commit rechecks disk before
-  the rewritten request may be sent. Sending the original request after a
-  rejected plan can leak stale code.
-- Resume uses the host session id and FreshCtx persisted observations.
-
-## Product PCR pointer
-
-Product PCR `openhands-0001` (2026-09-05): first OpenHands request-rewriting
-host under `bridges/openhands`. Compose order is `condense_then_freshctx`.
-Fail-closed.
-
-Living-suite PCR numbers stay in the research repository
-`docs/lab/INDEX.md` and `docs/lab/pcr/`. Do not copy those labs into this
-package.
-
-MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).
+The paired demo changes a header constant from 10 to 20 and inspects the final
+request. A separate simulated condensation arm shows that summary text stays
+stale. Neither fixture measures model accuracy, cost, or real condenser behavior.

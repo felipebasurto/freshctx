@@ -2,14 +2,19 @@
 
 ## Unreleased
 
-- Drop host bridges and harness install docs. This repository is the
-  engine. Wire it yourself.
-- Open the README with clone and `doctor`. Host wiring stays a few
-  sentences. If any step fails, drop the plan and do not send the original
-  request. JSONL over stdio is the public contract. Package `exports` of
-  internal modules are gone.
-- Remove `scripts/verify.mjs`. CI already runs `check`, `test`, and
-  `pack:check`.
+- Retain host bridges with separate dependencies and checks; document Pi's
+  tested host boundary and OpenHands' fixture-only status.
+- Prevent region refresh from jumping to an unchanged duplicate. Omit unknown
+  region fingerprints and recover file observations made while files were absent.
+- Reject unobserved successful Pi reads before dispatch, including lost state
+  on resume; reset the child when session or workspace changes.
+- Enforce Python transport deadlines across blocking reads and writes, and
+  move asynchronous wrapper work off the event loop.
+- Count whitespace toward JSONL frame limits and discard legacy cached plans
+  during identity migration.
+- Check every JavaScript source file and smoke-test the actual packed CLI.
+- Add an executable request-copy example, protocol reference, contributor guide,
+  publication audit, and evidence-scoped article draft.
 - Fold unit ranking into `projection.mjs`. Flatten the JSONL transport
   to functions.
 - Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat

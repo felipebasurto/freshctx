@@ -3,11 +3,18 @@ import { Bridge } from './src/bridge.mjs';
 
 export default function freshctx(pi) {
   let bridge;
+  let bridgeSessionId;
   const supported = ctx => ctx.model?.api === 'openai-completions';
   const getBridge = async ctx => {
     if (!supported(ctx)) throw new Error('freshctx-pi supports openai-completions only; select a compatible model');
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (bridge && (bridgeSessionId !== sessionId || bridge.root !== ctx.cwd)) {
+      await bridge.close();
+      bridge = undefined;
+    }
     if (!bridge) {
-      bridge = new Bridge({ root: ctx.cwd, sessionId: ctx.sessionManager.getSessionId() });
+      bridge = new Bridge({ root: ctx.cwd, sessionId });
+      bridgeSessionId = sessionId;
     }
     await bridge.ready;
     return bridge;
@@ -23,7 +30,11 @@ export default function freshctx(pi) {
   });
   pi.on('before_provider_request', async (event, ctx) => {
     try {
-      const result = await (await getBridge(ctx)).rewrite(event.payload);
+      const failedReadIds = ctx.sessionManager.getBranch()
+        .filter(entry => entry.type === 'message' && entry.message.role === 'toolResult'
+          && entry.message.toolName === 'read' && entry.message.isError === true)
+        .map(entry => entry.message.toolCallId);
+      const result = await (await getBridge(ctx)).rewrite(event.payload, { failedReadIds });
       ctx.ui.setStatus('freshctx', 'FreshCtx: current observed code');
       return result;
     } catch (error) {

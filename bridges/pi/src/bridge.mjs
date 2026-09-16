@@ -38,17 +38,20 @@ export class Bridge {
     return { content: [{ type: 'text', text }], details: { path: snapshot.path, startByte: start, endByte: end, totalLines: lines.length } };
   }
 
-  async rewrite(payload) {
+  async rewrite(payload, { failedReadIds = [] } = {}) {
     await this.ready;
     if (!payload || !Array.isArray(payload.messages)) throw new Error('Expected a Chat Completions request');
     const byId = new Map();
     const calls = new Set();
+    const reads = new Set();
+    const failed = new Set(failedReadIds);
     for (const message of payload.messages) {
       if (!message || typeof message !== 'object') throw new Error('Invalid native message');
       if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
         for (const call of message.tool_calls) {
-          if (typeof call.id !== 'string' || calls.has(call.id)) throw new Error('Duplicate or invalid tool call ID');
+          if (typeof call.id !== 'string' || !call.id || calls.has(call.id)) throw new Error('Duplicate or invalid tool call ID');
           calls.add(call.id);
+          if (call.function?.name === 'read') reads.add(call.id);
         }
       }
       if (message.role !== 'tool') continue;
@@ -66,6 +69,11 @@ export class Bridge {
       const text = result?.content === EMPTY_TOOL_OUTPUT && replacement.expected_sha256 === revisionFor('') ? '' : result?.content;
       if (typeof text !== 'string' || revisionFor(text) !== replacement.expected_sha256 || typeof replacement.marker !== 'string' || replacements.has(replacement.result_id)) throw new Error('Native tool result changed; entire FreshCtx plan discarded');
       replacements.set(replacement.result_id, replacement.marker);
+    }
+    for (const id of byId.keys()) {
+      if (reads.has(id) && !failed.has(id) && !replacements.has(id)) {
+        throw new Error('FreshCtx has no observation for a native read; restore matching session state or start a new session');
+      }
     }
     const copy = structuredClone(payload);
     for (const message of copy.messages) {

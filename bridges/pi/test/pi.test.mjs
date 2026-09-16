@@ -16,3 +16,7 @@ test('real Pi cancels HTTP dispatch if the FreshCtx child dies after a read', { 
 test('real Pi resumes a saved read after a function moves and uses its current code', { timeout: 30000 }, async () => {
   await runDemo({ resume: true });
 });
+
+test('real Pi blocks resumed HTTP dispatch when observations have been lost', { timeout: 30000 }, async () => {
+  await runDemo({ resume: true, missingState: true });
+});

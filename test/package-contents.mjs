@@ -47,3 +47,20 @@ for (const asset of manifest.assets) {
 }
 
 process.stdout.write(`package contains ${files.length} allowlisted files; ${manifest.assets.length} Tree-sitter assets verified\n`);
+
+// Exercise the actual tarball too: source-tree imports can hide missing files.
+const artifact = await mkdtemp(path.join(tmpdir(), "freshctx-artifact-"));
+try {
+  const built = JSON.parse(execFileSync("npm", ["pack", "--json", "--cache", artifact, "--pack-destination", artifact], { cwd: root, encoding: "utf8" }));
+  execFileSync("tar", ["-xzf", path.join(artifact, built[0].filename), "-C", artifact]);
+  const cli = path.join(artifact, "package", "bin", "freshctx.mjs");
+  const doctor = JSON.parse(execFileSync(process.execPath, [cli, "doctor"], { encoding: "utf8" }));
+  assert.equal(doctor.healthy, true);
+  const demo = JSON.parse(execFileSync(process.execPath, [path.join(root, "examples", "request-copy.mjs"), cli], { encoding: "utf8", timeout: 15000 }));
+  assert.equal(demo.historyPreserved, true);
+  assert.equal(demo.currentSymbolPresent, true);
+  assert.equal(demo.staleBodyRemoved, true);
+  process.stdout.write("packed CLI: doctor and observe/edit/prepare/commit example passed\n");
+} finally {
+  await rm(artifact, { recursive: true, force: true });
+}
