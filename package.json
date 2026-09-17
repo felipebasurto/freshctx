@@ -21,9 +21,10 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "check": "node test/syntax-check.mjs",
+    "check": "node scripts/check.mjs",
     "test": "node --test test/*.test.mjs",
-    "pack:check": "node test/package-contents.mjs"
+    "pack:check": "node test/package-contents.mjs",
+    "demo": "node examples/request-copy.mjs"
   },
   "keywords": [
     "context",
@@ -43,5 +44,9 @@
     "name": "Felipe Basurto",
     "url": "https://felipebasurto.com"
   },
-  "private": true
+  "private": true,
+  "exports": {
+    "./hash": "./src/hash.mjs",
+    "./workspace": "./src/workspace.mjs"
+  }
 }

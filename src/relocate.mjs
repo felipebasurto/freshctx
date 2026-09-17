@@ -106,6 +106,7 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
   }
   const unique = [...new Map(spans.map(([start, end]) => [`${start}:${end}`, [start, end]])).values()];
   if (unique.length === 0) return { status: "none" };
+  if (new Set(unique.map(([start]) => start)).size > 1) return { status: "ambiguous" };
   const contents = unique.map(([start, end]) => snapshotBytes.subarray(start, end));
   if (contents.every((span) => span.equals(contents[0]))) {
     return { status: "unique", startByte: unique[0][0], endByte: unique[0][1] };
@@ -242,6 +243,8 @@ export function relocateRegion(input) {
     relEnd = null,
     prevStart,
     prevEnd,
+    snapshotUnchanged = false,
+    previousOccurrences = null,
   } = input;
   const inBounds = (start, end) =>
     Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && end <= snapshotBytes.length;
@@ -262,8 +265,14 @@ export function relocateRegion(input) {
     surroundingsMatch(snapshotBytes, start, storedPrefix, true)
     && surroundingsMatch(snapshotBytes, end, storedSuffix, false);
 
-  // 1. Unmoved and unchanged.
-  if (matchesReferent(prevStart, prevEnd)) {
+  // 1. Unmoved and unchanged. Matching bytes at the old offset are the same
+  // occurrence when the snapshot is unchanged; after an edit they can be a
+  // sibling, so only treat them as identity-stable in the same snapshot.
+  if ((snapshotUnchanged || previousOccurrences === 1) && matchesReferent(prevStart, prevEnd)) {
+    return { status: "stable", startByte: prevStart, endByte: prevEnd };
+  }
+  if (matchesReferent(prevStart, prevEnd) && sameParent(prevStart, prevEnd)
+    && (previousOccurrences === 1 || previousOccurrences === null)) {
     return { status: "stable", startByte: prevStart, endByte: prevEnd };
   }
 

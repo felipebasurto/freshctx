@@ -162,6 +162,7 @@ test("duplicate surrounding anchor updates the edited span instead of a survivin
   assert.equal(plan.unit_states[plan.selected[0]].status, "updated");
   assert.match(unit.content, /VALUE = 9/u);
   assert.doesNotMatch(text, /VALUE = 1/u, "must not jump to the unchanged duplicate");
+  assert.doesNotMatch(text, /VALUE = 9\nMID = 0\nVALUE = 1/u, "must not merge both spans");
 });
 
 test("duplicate surrounding anchor with both copies changed does not pick the other copy", async (t) => {
@@ -289,6 +290,7 @@ test("relocateRegion never returns stale absolute offsets for shifted bytes", ()
     relEnd: null,
     prevStart: 0,
     prevEnd: 9,
+    previousOccurrences: 1,
   });
   assert.equal(outcome.status, "relocated");
   assert.deepEqual([outcome.startByte, outcome.endByte], [9, 18]);
