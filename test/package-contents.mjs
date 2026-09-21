@@ -136,7 +136,6 @@ try {
 
 process.stdout.write(`package contains ${files.length} allowlisted files; ${manifest.assets.length} Tree-sitter assets verified\n`);
 
-// Exercise the actual tarball too: source-tree imports can hide missing files.
 const artifact = await mkdtemp(path.join(tmpdir(), "freshctx-artifact-"));
 try {
   const built = JSON.parse(execFileSync("npm", ["pack", "--json", "--cache", artifact, "--pack-destination", artifact], { cwd: root, encoding: "utf8" }));

@@ -286,8 +286,6 @@ function validateSessionV2(state, sessionId) {
   validateSessionHeader(state, sessionId, SESSION_SCHEMA_VERSION);
   state.aliases = normalizeRecord(state.aliases, "session unit aliases");
   for (const [unitId, unit] of Object.entries(state.units)) {
-    // Early v2 writes omitted identity on unavailable files. Reconstruct only
-    // when the path independently hashes to the stored id.
     if (isRecord(unit) && unit.kind === "file" && unit.state === "unresolved"
       && !Object.hasOwn(unit, "identity") && typeof unit.path === "string"
       && compactUnitId(fileUnitIdentity(unit.path)) === unitId) {
@@ -453,8 +451,6 @@ function migrateSessionV1(state) {
     observations,
     units,
     aliases,
-    // Plans contain old markers and may include quarantined identities.
-    // Retain the archive, but require a new prepare under the migrated state.
     pendingPlans: Object.create(null),
     committedPlans: Object.create(null),
     sequence: state.sequence,

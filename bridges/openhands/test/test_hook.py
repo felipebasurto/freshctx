@@ -84,7 +84,6 @@ class HookTests(unittest.TestCase):
             config_from_env({"FRESHCTX_FALL_OPEN": "1"})
 
     def test_deadlines_cover_stalled_reads_and_writes_and_poison_the_client(self):
-        # An outer process deadline makes regressions fail instead of hanging CI.
         script = '''
 from freshctx_openhands import Client
 import sys, time

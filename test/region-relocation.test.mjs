@@ -231,8 +231,6 @@ test("edits elsewhere in a large file keep the region", async (t) => {
 });
 
 test("file granularity widens the same selection to synchronized whole files", async (t) => {
-  // Region-forcing fixture: header comment + type block above symbols, so the
-  // observed span stays a region unit (not file-fallback).
   const before = "/**\n * header\n */\n\nexport type M = \"a\";\n\nexport function f() {\n  return 1;\n}\n";
   const header = before.slice(0, before.indexOf("export function f"));
   const root = await workspaceFor(t, { "s.ts": before });
@@ -248,7 +246,6 @@ test("file granularity widens the same selection to synchronized whole files", a
   await writeFile(path.join(root, "s.ts"), after);
   const region = await session.prepare({ requestId: "q-region", resultIds: ["r1"], budgetBytes: 8192 });
   const file = await session.prepare({ requestId: "q-file", resultIds: ["r1"], budgetBytes: 8192, granularity: "file" });
-  // Same unit selected (selection parity), different injected granularity.
   assert.deepEqual(file.selected, region.selected);
   assert.equal(file.selection_granularity, "file");
   assert.equal(region.selection_granularity, "region");
@@ -258,7 +255,6 @@ test("file granularity widens the same selection to synchronized whole files", a
   assert.doesNotMatch(regionText, /return 1/u);
   assert.match(fileText, /"a" \| "b"/u);
   assert.match(fileText, /return 1/u);
-  // Structural counterfactual: region mode reports the whole-file equivalent.
   assert.ok(region.whole_file_equivalent.whole_file_bytes >= Buffer.byteLength(fileText, "utf8") - 64);
   assert.deepEqual(region.whole_file_equivalent.files.map((entry) => entry.path), ["s.ts"]);
   assert.equal(file.whole_file_equivalent, undefined);
