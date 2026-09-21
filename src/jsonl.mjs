@@ -22,7 +22,6 @@ async function waitForDrain(output) {
   try {
     await once(output, "drain", { signal: controller.signal });
   } catch {
-    // close, finish, or error must end the wait instead of hanging on drain
   } finally {
     output.off("close", abort);
     output.off("finish", abort);

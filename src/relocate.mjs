@@ -76,11 +76,6 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
     else return { status: "ambiguous" };
   } else {
     if (starts.length === 0 || ends.length === 0) return { status: "none" };
-    // Pair each start with its nearest following end (the relocation
-    // hypothesis). When the bracketed content itself changed (inserted or
-    // deleted lines), also extend the best-matching start toward later ends
-    // so the grown span competes on similarity; section-merging extensions
-    // are triaged below and can never win outright.
     for (const start of starts) {
       const end = ends.find((candidate) => candidate > start);
       if (end !== undefined) push(start, end);
@@ -111,10 +106,6 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
   if (contents.every((span) => span.equals(contents[0]))) {
     return { status: "unique", startByte: unique[0][0], endByte: unique[0][1] };
   }
-  // Anchors repeat with distinct bracketed contents. Prefer the span most
-  // similar to the referent, but only when it is unambiguously the best AND
-  // the maximal span would merge distinct repeated sections (a containment
-  // failure like [A..A..B] merging two SEC blocks is never "updated").
   if (referentText === null) return { status: "ambiguous" };
   const scored = unique.map(([start, end]) => ({
     start,
@@ -122,19 +113,11 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
     score: byteBigramSimilarity(snapshotBytes.subarray(start, end).toString("utf8"), referentText),
   }));
   scored.sort((left, right) => right.score - left.score || left.start - right.start);
-  // Triage candidate spans: maximal spans that merge distinct repeated
-  // sections are never themselves the answer (they swallow siblings), but
-  // they must not veto the minimal-span winner either. Score only the
-  // minimal (nearest-end) spans; growth hypotheses only compete when no
-  // minimal span reaches the similarity threshold.
   const bestTextOf = (entry) => snapshotBytes.subarray(entry.start, entry.end).toString("utf8");
   const prefixText = Buffer.from(prefixAnchor ?? "", "base64").toString("utf8");
   const suffixText = Buffer.from(suffixAnchor ?? "", "base64").toString("utf8");
   const repeatsInside = (text, anchor) =>
     anchor.length > 0 && text.indexOf(anchor) !== text.lastIndexOf(anchor);
-  // Growth hypothesis: when the nearest-end minimal span misses the
-  // threshold, the span may have absorbed inserted lines, so extend the
-  // best minimal start toward later ends (the full current section).
   const growth = [];
   {
     const endsSorted = [...ends].sort((a, b) => a - b);
@@ -165,13 +148,6 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
   const nonMergingMinimal = minimal.filter(
     (entry) => !repeatsInside(bestTextOf(entry), prefixText) && !repeatsInside(bestTextOf(entry), suffixText),
   );
-  // Prefer a non-merging minimal winner; otherwise the best minimal span may
-  // still win outright; growth hypotheses (extensions absorbing inserted
-  // lines) compete only when no minimal span reaches the threshold. A growth
-  // span swallows a sibling section only when the repeated anchor pair
-  // recurs: the maximal span must contain a second prefix occurrence that is
-  // itself followed by the suffix (a nested bracket pair), not merely a bare
-  // repeated newline.
   const minimalViable = minimal.filter((entry) => entry.score >= SIMILARITY_THRESHOLD);
   const nestsPair = (entry) => {
     const text = bestTextOf(entry);
@@ -212,8 +188,6 @@ export function bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBy
   if (pool.length >= 2 && best.score > pool[1].score && best.score >= SIMILARITY_THRESHOLD) {
     return { status: "unique", startByte: best.start, endByte: best.end };
   }
-  // A single non-merging minimal span (every alternative merges sections or
-  // misses the threshold) is the unambiguous bracket.
   if (pool.length === 1 && isMinimal(best) && best.score >= SIMILARITY_THRESHOLD) {
     return { status: "unique", startByte: best.start, endByte: best.end };
   }
@@ -265,9 +239,6 @@ export function relocateRegion(input) {
     surroundingsMatch(snapshotBytes, start, storedPrefix, true)
     && surroundingsMatch(snapshotBytes, end, storedSuffix, false);
 
-  // 1. Unmoved and unchanged. Matching bytes at the old offset are the same
-  // occurrence when the snapshot is unchanged; after an edit they can be a
-  // sibling, so only treat them as identity-stable in the same snapshot.
   if ((snapshotUnchanged || previousOccurrences === 1) && matchesReferent(prevStart, prevEnd)) {
     return { status: "stable", startByte: prevStart, endByte: prevEnd };
   }
@@ -278,7 +249,6 @@ export function relocateRegion(input) {
 
   let ambiguous = false;
 
-  // 2. Structural parent moved; same referent at translated offsets.
   if (parentSelector !== null && Number.isInteger(relStart) && Number.isInteger(relEnd)) {
     const matches = parsedUnits.filter((unit) => unit.selector === parentSelector);
     if (matches.length === 1) {
@@ -292,8 +262,6 @@ export function relocateRegion(input) {
     }
   }
 
-  // 3. Surroundings still pin the original placement. Refresh in place and do
-  // not jump to an unchanged duplicate elsewhere.
   if (inBounds(prevStart, prevEnd) && surroundingsAt(prevStart, prevEnd) && sameParent(prevStart, prevEnd)) {
     if (similarEnough(prevStart, prevEnd)) {
       return { status: "updated", startByte: prevStart, endByte: prevEnd };
@@ -301,8 +269,6 @@ export function relocateRegion(input) {
     return { status: "invalidated" };
   }
 
-  // 4. Exact referent bytes. A unique copy may have moved. Several copies
-  // without a single surroundings match are omitted, never occurrences[0].
   const occurrences = findByteOccurrences(snapshotBytes, referentBytes);
   if (occurrences.length === 1) {
     const at = occurrences[0];
@@ -317,7 +283,6 @@ export function relocateRegion(input) {
     ambiguous = true;
   }
 
-  // 5. Anchors bracket exactly one span whose content changed but stays similar.
   const bracketed = bracketSpan(snapshotBytes, prefixAnchor, suffixAnchor, maxSpanBytes, decode(referentBytes));
   if (bracketed.status === "unique") {
     if (sameParent(bracketed.startByte, bracketed.endByte) && similarEnough(bracketed.startByte, bracketed.endByte)) {

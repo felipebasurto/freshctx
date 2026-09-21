@@ -219,8 +219,6 @@ class Utf16ToUtf8Index {
     this.offsets = offsets;
   }
 
-  // One cumulative walk so declaration offsets stay O(n) instead of O(n × decls).
-  // Prefix slices keep BOM / lone-surrogate behavior identical to Buffer.byteLength.
   static fromText(text, indices) {
     const unique = [...new Set(indices)].sort((a, b) => a - b);
     const offsets = new Map();

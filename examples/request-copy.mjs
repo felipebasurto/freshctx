@@ -7,7 +7,6 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-// This example is a protocol client, not an agent or a model evaluation.
 const cli = process.argv[2] ?? fileURLToPath(new URL('../bin/freshctx.mjs', import.meta.url));
 const root = await mkdtemp(path.join(tmpdir(), 'freshctx-example-'));
 const revision = text => 'sha256:' + createHash('sha256').update(text).digest('hex');
@@ -55,7 +54,6 @@ try {
     { role: 'tool', tool_call_id: 'read-1', content: observed },
     { role: 'user', content: 'What does total(3) return now?' },
   ];
-  // Represents an edit between a tool read and the next provider request.
   await writeFile(path.join(root, 'price.js'), '// inserted\n' + current + '\n\nfunction other() { return 99; }\n');
   const plan = await request('prepare', { request_id: 'next-request', result_ids: ['read-1'], budget_bytes: 4096 });
   const projection = Buffer.from(plan.projection_utf8_base64, 'base64').toString('utf8');
