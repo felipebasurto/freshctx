@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Bridge } from '../src/bridge.mjs';
-import { Client } from '../src/client.mjs';
+import { Client } from 'freshctx/client';
 import { configFromEnv } from '../src/config.mjs';
 import { auditRewrite, assertPairedFreshness, summarizeMessages } from './fixture-support.mjs';
 

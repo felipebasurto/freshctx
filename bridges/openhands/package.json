@@ -30,7 +30,7 @@
     "freshctx": "file:../.."
   },
   "scripts": {
-    "check": "node --check src/bridge.mjs && node --check src/client.mjs && node --check src/config.mjs && node --check src/messages.mjs && node --check demo.mjs && node --check test/fixture-support.mjs && python3 -m py_compile freshctx_openhands.py",
+    "check": "node --check src/bridge.mjs && node --check src/config.mjs && node --check src/messages.mjs && node --check demo.mjs && node --check test/fixture-support.mjs && python3 -m py_compile freshctx_openhands.py",
     "test": "node --test test/*.test.mjs && python3 test/test_hook.py",
     "demo": "node demo.mjs"
   },

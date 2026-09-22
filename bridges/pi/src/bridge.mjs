@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { revisionFor } from 'freshctx/hash';
 import { openWorkspace, readStableText } from 'freshctx/workspace';
-import { Client } from './client.mjs';
+import { Client } from 'freshctx/client';
 
 const EMPTY_TOOL_OUTPUT = '(no tool output)';
 
@@ -27,8 +27,7 @@ export class Bridge {
     const lines = snapshot.text.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
     if (offset > Math.max(1, lines.length)) throw new Error('offset is past the end of the file');
     const raw = lines.slice(offset - 1, offset - 1 + limit).join('');
-    const withoutTerminalSeparators = raw.replace(/(?:\r?\n)+$/u, '');
-    const text = withoutTerminalSeparators || raw;
+    const text = raw.replace(/(?:\r?\n)+$/u, '') || raw;
     const start = Buffer.byteLength(lines.slice(0, offset - 1).join(''));
     const end = start + Buffer.byteLength(text);
     await this.client.request('observe', {

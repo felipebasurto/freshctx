@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { revisionFor } from 'freshctx/hash';
 import { openWorkspace, readStableText } from 'freshctx/workspace';
-import { Client } from './client.mjs';
+import { Client } from 'freshctx/client';
 import { ADAPTER, CAPABILITIES, DEFAULT_BUDGET_BYTES } from './config.mjs';
 import {
   asRequest,

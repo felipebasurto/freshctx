@@ -8,7 +8,7 @@ a falsifiable improvement. Keep public claims proportional to the evidence.
 
 | Area | Files |
 | --- | --- |
-| CLI and JSONL | `bin/freshctx.mjs`, `src/cli.mjs`, `src/jsonl.mjs`, `src/server.mjs` |
+| CLI and JSONL | `bin/freshctx.mjs`, `src/cli.mjs`, `src/jsonl.mjs`, `src/server.mjs`, `src/client.mjs` |
 | Request validation | `src/protocol.mjs`, `schema/freshctx-v1.json` |
 | Observation, refresh, plans | `src/session.mjs` |
 | Parsing and region tracking | `src/treesitter.mjs`, `src/relocate.mjs` |
@@ -16,9 +16,10 @@ a falsifiable improvement. Keep public claims proportional to the evidence.
 | Workspace and revision archive | `src/workspace.mjs`, `src/store.mjs`, `src/hash.mjs` |
 | Host integrations | `bridges/pi`, `bridges/openhands` |
 
-The wire protocol is the main integration boundary. Only `freshctx/hash` and
-`freshctx/workspace` have package exports for the maintained bridges. Other
-modules are implementation details, not a stable external API.
+The wire protocol is the main integration boundary. Only `freshctx/client`,
+`freshctx/hash`, and `freshctx/workspace` have package exports for the
+maintained bridges. Other modules are implementation details, not a stable
+external API.
 
 ## Validate a change
 

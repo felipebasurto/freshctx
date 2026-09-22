@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Bridge } from '../src/bridge.mjs';
-import { Client } from '../src/client.mjs';
+import { Client } from 'freshctx/client';
 
 const body = '# café\r\nRATE = 10\r\n\r\ndef total():\r\n    return RATE\r\n';
 function request(text) {
