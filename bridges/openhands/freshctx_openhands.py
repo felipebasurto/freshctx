@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import threading
 import queue
@@ -17,6 +16,8 @@ from uuid import uuid4
 PROTOCOL = "freshctx/1"
 ADAPTER = "freshctx-openhands/openai-completions"
 COMPOSE_ORDER = "condense_then_freshctx"
+DEFAULT_BUDGET_BYTES = 131072
+DEFAULT_TIMEOUT_MS = 10000
 CAPABILITIES = {
     "request_rewrite": True,
     "stable_result_identity": True,
@@ -38,10 +39,10 @@ def config_from_env(env: dict[str, str] | None = None) -> dict[str, Any]:
     if _truthy(source.get("FRESHCTX_FALL_OPEN")):
         raise RuntimeError("FreshCtx OpenHands bridge does not support fall-open; rejected plans must cancel dispatch")
     enabled = True if source.get("FRESHCTX_ENABLED") is None else not _falsey(source.get("FRESHCTX_ENABLED"))
-    budget = 131072 if source.get("FRESHCTX_BUDGET_BYTES") is None else int(source["FRESHCTX_BUDGET_BYTES"])
+    budget = DEFAULT_BUDGET_BYTES if source.get("FRESHCTX_BUDGET_BYTES") is None else int(source["FRESHCTX_BUDGET_BYTES"])
     if budget < 0:
         raise RuntimeError("FRESHCTX_BUDGET_BYTES must be a non-negative integer")
-    timeout_ms = 10000 if source.get("FRESHCTX_TIMEOUT_MS") is None else int(source["FRESHCTX_TIMEOUT_MS"])
+    timeout_ms = DEFAULT_TIMEOUT_MS if source.get("FRESHCTX_TIMEOUT_MS") is None else int(source["FRESHCTX_TIMEOUT_MS"])
     if timeout_ms < 1:
         raise RuntimeError("FRESHCTX_TIMEOUT_MS must be a positive integer")
     return {
@@ -122,11 +123,10 @@ def index_tool_results(payload: Any) -> tuple[dict[str, Any], dict[str, dict[str
 
 
 class Client:
-    def __init__(self, root: str, timeout_ms: int = 10000, command: str | None = None, args: list[str] | None = None) -> None:
-        node = command or shutil.which("node") or "node"
+    def __init__(self, root: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, command: str | None = None, args: list[str] | None = None) -> None:
         argv = args or [str(_product_cli()), "serve", "--stdio", "--root", root]
         self.child = subprocess.Popen(
-            [node, *argv],
+            [command or "node", *argv],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -137,8 +137,6 @@ class Client:
         self.sequence = 0
         self.lock = threading.Lock()
         self.failure: Exception | None = None
-        if self.child.stdin is None or self.child.stdout is None:
-            raise RuntimeError("FreshCtx child missing stdio")
 
     def request(self, op: str, fields: dict[str, Any] | None = None) -> Any:
         deadline = time.monotonic() + self.timeout_s
@@ -201,10 +199,8 @@ class Client:
             self.child.kill()
             self.child.wait(timeout=1)
         with self.lock:
-            if self.child.stdin:
-                self.child.stdin.close()
-            if self.child.stdout:
-                self.child.stdout.close()
+            self.child.stdin.close()
+            self.child.stdout.close()
 
 
 class Bridge:
@@ -212,13 +208,12 @@ class Bridge:
         self,
         root: str,
         session_id: str,
-        budget_bytes: int = 131072,
+        budget_bytes: int = DEFAULT_BUDGET_BYTES,
         enabled: bool = True,
         client: Client | None = None,
         on_audit: Callable[[dict[str, Any]], None] | None = None,
-        timeout_ms: int = 10000,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ) -> None:
-        self.root = root
         self.budget_bytes = budget_bytes
         self.enabled = enabled
         self.on_audit = on_audit
@@ -303,32 +298,28 @@ class Bridge:
             self.client.close()
 
 
+def _rewritten_call(messages: Any, kwargs: dict[str, Any], rewritten: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    if messages is not None:
+        return [rewritten["messages"]], kwargs
+    return [], {**kwargs, "messages": rewritten["messages"]}
+
+
 def wrap_llm(llm: Any, bridge: Bridge) -> Any:
     original = llm.completion
 
     def completion(messages=None, **kwargs):
-        payload = messages if messages is not None else kwargs.get("messages")
-        if payload is None and isinstance(kwargs.get("messages"), list):
-            payload = kwargs["messages"]
-        request = as_request(payload if payload is not None else {"messages": kwargs.get("messages")})
-        rewritten = bridge.rewrite(request)
-        if messages is not None:
-            return original(rewritten["messages"], **kwargs)
-        kwargs = {**kwargs, "messages": rewritten["messages"]}
-        return original(**kwargs)
+        request = as_request(messages if messages is not None else kwargs.get("messages"))
+        args, call_kwargs = _rewritten_call(messages, kwargs, bridge.rewrite(request))
+        return original(*args, **call_kwargs)
 
     llm.completion = completion
     if hasattr(llm, "async_completion"):
         original_async = llm.async_completion
 
         async def async_completion(messages=None, **kwargs):
-            payload = messages if messages is not None else kwargs.get("messages")
-            request = as_request(payload if payload is not None else {"messages": kwargs.get("messages")})
-            rewritten = await asyncio.to_thread(bridge.rewrite, request)
-            if messages is not None:
-                return await original_async(rewritten["messages"], **kwargs)
-            kwargs = {**kwargs, "messages": rewritten["messages"]}
-            return await original_async(**kwargs)
+            request = as_request(messages if messages is not None else kwargs.get("messages"))
+            args, call_kwargs = _rewritten_call(messages, kwargs, await asyncio.to_thread(bridge.rewrite, request))
+            return await original_async(*args, **call_kwargs)
 
         llm.async_completion = async_completion
     return llm

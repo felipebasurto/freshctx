@@ -4,7 +4,7 @@ export function asRequest(payload) {
   throw new Error('Expected an OpenHands Chat Completions request with messages');
 }
 
-export function toolCallId(call) {
+function toolCallId(call) {
   if (!call || typeof call !== 'object' || typeof call.id !== 'string' || call.id.length === 0) return null;
   return call.id;
 }
@@ -28,7 +28,6 @@ export function contentText(content) {
 }
 
 export function replaceContent(content, text) {
-  if (typeof content === 'string' || content == null) return text;
   if (!Array.isArray(content)) return text;
   if (content.length === 1 && content[0] && typeof content[0] === 'object') {
     return [{ ...content[0], type: content[0].type ?? 'text', text }];
@@ -36,7 +35,7 @@ export function replaceContent(content, text) {
   return [{ type: 'text', text }];
 }
 
-export function usesContentBlocks(messages) {
+function usesContentBlocks(messages) {
   return messages.some(message => message && Array.isArray(message.content));
 }
 
