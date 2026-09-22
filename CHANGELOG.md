@@ -13,8 +13,8 @@
 - Count whitespace toward JSONL frame limits and discard legacy cached plans
   during identity migration.
 - Check every JavaScript source file and smoke-test the actual packed CLI.
-- Add an executable request-copy example, protocol reference, contributor guide,
-  publication audit, and evidence-scoped article draft.
+- Add an executable request-copy example, protocol reference, and contributor
+  guide. The article is not part of this repository.
 - Fold unit ranking into `projection.mjs`. Flatten the JSONL transport
   to functions.
 - Label projection frame lengths as UTF-8 `Nbytes` so models cannot treat

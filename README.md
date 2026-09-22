@@ -8,8 +8,8 @@ markers and adds a budgeted view of current workspace code.
 The saved conversation stays intact. The engine handles file snapshots, code
 units, revision storage, and selection; the bridge handles the host's tools
 and outgoing request format. Freshness checks do not establish better model
-outcomes. See the [article draft](freshctx-blog.md) for the experiment and its
-limits.
+outcomes. Measurements and the live-run records are in
+[freshctx-research](https://github.com/felipebasurto/freshctx-research).
 
 npm publication is disabled. This checkout is prepared under the
 [development policy](AGENTS.md); no registry install is required.

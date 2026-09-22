@@ -1,10 +1,11 @@
 # FreshCtx development policy
 
-FreshCtx stays private while its substance improves. Do not make repositories
-public, publish npm packages, create a public launch, or distribute promotional
-material without Felipe's new explicit authorization. Existing tags and release
-history are preserved. The intended public launch is Felipe's technical blog
-post after the evidence supports the story.
+This repository is the maintained engine. The technical article lives on
+Felipe's site and is not stored here. Measurements stay in freshctx-research,
+which may be read publicly. freshctx-bench stays private. Do not publish npm
+packages, make additional repositories public, or distribute further
+promotional material without Felipe's explicit authorization. Existing tags
+and release history are preserved.
 
 The product is the root package. Maintain host integrations under `bridges/<host>`
 with separate manifests and tests. Do not create a repository per harness.
