@@ -32,6 +32,17 @@
 - `npm run check` syntax-checks each source file. `npm run pack:check`
   extracts the tarball and runs `doctor` plus observe, edit, prepare, and
   commit on the packed CLI.
+- Share one JSONL client as `freshctx/client` instead of a copy per bridge.
+  `pack:check` packs once and runs every check, including the example,
+  against that tarball.
+- Remove unreachable relocation and parse branches, unused exports, and the
+  projection decoder, which only tests used and now lives in
+  `test/helpers.mjs`. `hello` still accepts `adapter`; the engine no longer
+  keeps the value it never read.
+- Cache one Tree-sitter parser per language and parse each file at most once
+  per prepare. Existing blobs are no longer re-read on write; reads still
+  verify the SHA-256. Observe no longer stores host bytes that no revision
+  references.
 
 ## 0.1.0
 
