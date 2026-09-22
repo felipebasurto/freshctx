@@ -11,45 +11,38 @@ const TOO_LARGE = Object.freeze({
   message: "JSONL line exceeds the maximum frame size",
 });
 
-async function waitForDrain(output) {
-  if (!output.writableNeedDrain) return;
-  if (!output.writable || output.destroyed) return;
+const INVALID_JSON = Object.freeze({
+  code: "invalid_json",
+  message: "JSONL line is not valid JSON",
+});
+
+async function writeFrame(output, value) {
+  if (output.write(`${JSON.stringify(value)}\n`) || !output.writable || output.destroyed) return;
   const controller = new AbortController();
   const abort = () => controller.abort();
   output.once("close", abort);
   output.once("finish", abort);
-  output.once("error", abort);
   try {
     await once(output, "drain", { signal: controller.signal });
   } catch {
   } finally {
     output.off("close", abort);
     output.off("finish", abort);
-    output.off("error", abort);
   }
-}
-
-async function writeFrame(output, value) {
-  const payload = `${JSON.stringify(value)}\n`;
-  if (output.write(payload)) return;
-  if (!output.writable || output.destroyed) return;
-  await waitForDrain(output);
 }
 
 async function writeResponse(line, output, handle) {
   let request;
   try {
-    try {
-      request = JSON.parse(line);
-    } catch {
-      await writeFrame(output, failure(null, { code: "invalid_json", message: "JSONL line is not valid JSON" }));
-      return;
-    }
-    const result = await handle(request);
-    await writeFrame(output, result);
+    request = JSON.parse(line);
+  } catch {
+    await writeFrame(output, failure(null, INVALID_JSON));
+    return;
+  }
+  try {
+    await writeFrame(output, await handle(request));
   } catch (error) {
-    const id = request && typeof request === "object" ? request.id : null;
-    await writeFrame(output, failure(id, publicError(error)));
+    await writeFrame(output, failure(request?.id, publicError(error)));
   }
 }
 
@@ -58,7 +51,14 @@ export async function serveJsonLines({ input, output, handle, maxLineBytes = MAX
   let buffered = "";
   let discarding = false;
 
-  const emitTooLarge = () => writeFrame(output, failure(null, TOO_LARGE));
+  const dispatch = async (raw) => {
+    if (Buffer.byteLength(raw, "utf8") > maxLineBytes) {
+      await writeFrame(output, failure(null, TOO_LARGE));
+      return;
+    }
+    const line = raw.trim();
+    if (line.length > 0) await writeResponse(line, output, handle);
+  };
 
   const take = async (text) => {
     if (discarding) {
@@ -69,36 +69,23 @@ export async function serveJsonLines({ input, output, handle, maxLineBytes = MAX
     } else {
       buffered += text;
     }
-    let newline;
-    while ((newline = buffered.indexOf("\n")) !== -1) {
-      const raw = buffered.slice(0, newline);
-      buffered = buffered.slice(newline + 1);
-      if (Buffer.byteLength(raw, "utf8") > maxLineBytes) {
-        await emitTooLarge();
-        continue;
-      }
-      const line = raw.trim();
-      if (line.length === 0) continue;
-      await writeResponse(line, output, handle);
+    let start = 0;
+    for (let newline = buffered.indexOf("\n"); newline !== -1; newline = buffered.indexOf("\n", start)) {
+      const raw = buffered.slice(start, newline);
+      start = newline + 1;
+      await dispatch(raw);
     }
-    if (discarding || buffered.includes("\n")) return;
-    if (Buffer.byteLength(buffered, "utf8") <= maxLineBytes) return;
-    await emitTooLarge();
-    discarding = true;
-    buffered = "";
+    buffered = buffered.slice(start);
+    if (Buffer.byteLength(buffered, "utf8") > maxLineBytes) {
+      await writeFrame(output, failure(null, TOO_LARGE));
+      discarding = true;
+      buffered = "";
+    }
   };
 
   for await (const chunk of input) {
     await take(decoder.write(chunk));
   }
-  const tail = decoder.end();
-  if (tail) await take(tail);
-  if (discarding || buffered.length === 0) return;
-  if (Buffer.byteLength(buffered, "utf8") > maxLineBytes) {
-    await emitTooLarge();
-    return;
-  }
-  const line = buffered.trim();
-  if (line.length === 0) return;
-  await writeResponse(line, output, handle);
+  await take(decoder.end());
+  if (!discarding && buffered.length > 0) await dispatch(buffered);
 }

@@ -1,71 +1,14 @@
-function projectionBytes(text) {
-  return Buffer.byteLength(text, "utf8");
+export function stableMarker(unitId) {
+  return `[${unitId}]`;
 }
 
-const CONTENT_BYTES_SUFFIX = "bytes";
-
-function formatContentBytes(contentBytes) {
-  return `${contentBytes}${CONTENT_BYTES_SUFFIX}`;
-}
-
-function parseContentBytesField(field) {
-  if (!field.endsWith(CONTENT_BYTES_SUFFIX)) {
-    throw new Error("invalid FreshCtx content-bytes header");
-  }
-  const raw = field.slice(0, -CONTENT_BYTES_SUFFIX.length);
-  if (!/^\d+$/u.test(raw)) {
-    throw new Error("invalid FreshCtx content-bytes header");
-  }
-  const contentBytes = Number(raw);
-  if (!Number.isSafeInteger(contentBytes) || contentBytes < 0) {
-    throw new Error("invalid FreshCtx content-bytes header");
-  }
-  return contentBytes;
-}
-
-function assertKind(kind) {
-  switch (kind) {
-    case "file":
-    case "symbol":
-    case "region":
-      return kind;
-    default: {
-      const _exhaustive = kind;
-      throw new TypeError(`unknown FreshCtx unit kind: ${_exhaustive}`);
-    }
-  }
-}
-
-export function stableMarker(unit) {
-  return `[${unit.id}]`;
-}
-
-export function unavailableMarker(unit, reason) {
-  const safeReason = String(reason ?? "unresolved").replaceAll("\n", " ").replaceAll("\r", " ");
-  return `[${unit.id} ${safeReason}]`;
+export function unavailableMarker(unitId, reason) {
+  return `[${unitId} ${reason.replace(/[\r\n]/gu, " ")}]`;
 }
 
 export function renderUnit(unit) {
-  const contentBytes = projectionBytes(unit.content);
-  const kind = assertKind(unit.kind);
-  const header = kind === "file"
-    ? `${unit.path}:${formatContentBytes(contentBytes)}`
-    : `${unit.path}:${kind}:${formatContentBytes(contentBytes)}`;
-  return `${header}\n${unit.content}`;
-}
-
-function renderEnvelope(selected) {
-  return selected.map(renderUnit).join("");
-}
-
-function compareRenderOrder(left, right) {
-  const byPath = left.path.localeCompare(right.path);
-  if (byPath !== 0) return byPath;
-  return left.id.localeCompare(right.id);
-}
-
-function recency(left, right) {
-  return right.observedAt - left.observedAt || left.id.localeCompare(right.id);
+  const kind = unit.kind === "file" ? "" : `${unit.kind}:`;
+  return `${unit.path}:${kind}${Buffer.byteLength(unit.content, "utf8")}bytes\n${unit.content}`;
 }
 
 function unitsOverlap(left, right) {
@@ -74,117 +17,30 @@ function unitsOverlap(left, right) {
   return left.startByte < right.endByte && right.startByte < left.endByte;
 }
 
-function rankActiveUnits(units) {
-  const byId = new Map();
-  for (const unit of units) {
-    const existing = byId.get(unit.id);
-    if (!existing || recency(unit, existing) < 0) byId.set(unit.id, unit);
-  }
-  const unique = [...byId.values()].sort(recency);
-  const candidates = [];
-  const omitted = [];
-  for (const unit of unique) {
-    if (unit.state !== "resolved") {
-      omitted.push({ unitId: unit.id, reason: unit.reason ?? "unresolved" });
-      continue;
-    }
-    candidates.push(unit);
-  }
-  return { candidates, omitted };
-}
-
 export function buildProjection(units, budgetBytes) {
-  if (!Number.isSafeInteger(budgetBytes) || budgetBytes < 0) {
-    throw new TypeError("budgetBytes must be a non-negative safe integer");
-  }
-  const ranked = rankActiveUnits(units);
-  const selected = [];
-  const omitted = [...ranked.omitted];
-  if (budgetBytes === 0) {
-    return {
-      text: "",
-      bytes: 0,
-      selected,
-      omitted: [...omitted, ...ranked.candidates.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
-    };
-  }
-  let selectedBytes = 0;
-  for (const unit of ranked.candidates) {
-    if (selected.some((admitted) => unitsOverlap(admitted, unit))) {
+  const ranked = [...units].sort((left, right) => right.observedAt - left.observedAt || left.id.localeCompare(right.id));
+  const admitted = [];
+  const omitted = [];
+  let remaining = budgetBytes;
+  for (const unit of ranked) {
+    if (admitted.some((entry) => unitsOverlap(entry.unit, unit))) {
       omitted.push({ unitId: unit.id, reason: "overlap" });
       continue;
     }
-    const unitBytes = projectionBytes(renderUnit(unit));
-    if (unitBytes <= budgetBytes - selectedBytes) {
-      selected.push(unit);
-      selectedBytes += unitBytes;
-    } else {
+    const text = renderUnit(unit);
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > remaining) {
       omitted.push({ unitId: unit.id, reason: "budget" });
+      continue;
     }
+    admitted.push({ unit, text });
+    remaining -= bytes;
   }
-  selected.sort(compareRenderOrder);
-  const text = renderEnvelope(selected);
-  if (projectionBytes(text) > budgetBytes) {
-    return {
-      text: "",
-      bytes: 0,
-      selected: [],
-      omitted: [...omitted, ...selected.map((unit) => ({ unitId: unit.id, reason: "budget" }))],
-    };
-  }
+  admitted.sort((left, right) => left.unit.path.localeCompare(right.unit.path) || left.unit.id.localeCompare(right.unit.id));
   return {
-    text,
-    bytes: projectionBytes(text),
-    selected,
+    text: admitted.map((entry) => entry.text).join(""),
+    bytes: budgetBytes - remaining,
+    selected: admitted.map((entry) => entry.unit),
     omitted,
   };
-}
-
-function parseHeader(header) {
-  const lastColon = header.lastIndexOf(":");
-  if (lastColon <= 0) throw new Error("invalid FreshCtx unit header");
-  const contentBytes = parseContentBytesField(header.slice(lastColon + 1));
-  const prefix = header.slice(0, lastColon);
-  const kindColon = prefix.lastIndexOf(":");
-  if (kindColon !== -1) {
-    const maybeKind = prefix.slice(kindColon + 1);
-    if (maybeKind === "symbol" || maybeKind === "region") {
-      const sourcePath = prefix.slice(0, kindColon);
-      if (!sourcePath) throw new Error("invalid FreshCtx unit path");
-      return { path: sourcePath, kind: maybeKind, contentBytes };
-    }
-  }
-  if (!prefix) throw new Error("invalid FreshCtx unit path");
-  return { path: prefix, kind: "file", contentBytes };
-}
-
-function linesForContent(content) {
-  return `1-${content.length === 0 ? 1 : content.split("\n").length}`;
-}
-
-export function decodeProjectionUnits(text) {
-  const source = Buffer.from(String(text), "utf8");
-  const decoded = [];
-  let cursor = 0;
-  while (cursor < source.length) {
-    const headerEnd = source.indexOf(0x0a, cursor);
-    if (headerEnd === -1) throw new Error("unterminated FreshCtx unit header");
-    const header = source.subarray(cursor, headerEnd).toString("utf8");
-    const attributes = parseHeader(header);
-    const contentStart = headerEnd + 1;
-    const contentEnd = contentStart + attributes.contentBytes;
-    if (contentEnd > source.length) {
-      throw new Error("FreshCtx unit length does not align with its content-bytes header");
-    }
-    const content = source.subarray(contentStart, contentEnd).toString("utf8");
-    decoded.push({
-      path: attributes.path,
-      kind: attributes.kind,
-      contentBytes: attributes.contentBytes,
-      content,
-      lines: linesForContent(content),
-    });
-    cursor = contentEnd;
-  }
-  return decoded;
 }

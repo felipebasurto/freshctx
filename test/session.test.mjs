@@ -4,16 +4,14 @@ import path from "node:path";
 import test from "node:test";
 
 import { FreshCtxError } from "../src/errors.mjs";
-import { digestFromRevision, revisionFor, stableId } from "../src/hash.mjs";
-import { decodeProjectionUnits } from "../src/projection.mjs";
-import { FreshCtxSession, MAX_PENDING_PLANS, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
+import { compactUnitId, digestFromRevision, revisionFor } from "../src/hash.mjs";
+import { MAX_PENDING_PLANS, PENDING_PLAN_TTL_MS } from "../src/session.mjs";
 import { openWorkspace } from "../src/workspace.mjs";
-import { cleanStore, openSessionStore } from "../src/store.mjs";
-import { content, decodedProjection, sessionFor, workspaceFor } from "./helpers.mjs";
+import { cleanStore } from "../src/store.mjs";
+import { content, decodedProjection, decodeUnits, projectedUnits, sessionFor, workspaceFor } from "./helpers.mjs";
 
 function sessionFile(root, sessionId = "session") {
-  const key = stableId("session", { sessionId }).slice("session_".length);
-  return path.join(root, ".freshctx", "sessions", `${key}.json`);
+  return path.join(root, ".freshctx", "sessions", `${compactUnitId({ sessionId })}.json`);
 }
 
 function blobDirectory(root) {
@@ -53,7 +51,7 @@ test("a partial read projects the current Tree-sitter symbol, never its historic
   });
   await writeFile(path.join(root, "src/a.py"), after);
   const plan = await session.prepare({ requestId: "provider-1", resultIds: ["native-1"], budgetBytes: 4096 });
-  const units = decodeProjectionUnits(decodedProjection(plan));
+  const units = projectedUnits(plan);
   assert.equal(plan.selected[0], observation.unit_id);
   assert.equal(units[0].kind, "symbol");
   assert.match(units[0].content, /'new'/u);
@@ -61,7 +59,7 @@ test("a partial read projects the current Tree-sitter symbol, never its historic
   assert.equal(plan.replacements[0].expected_sha256, revisionFor(symbol));
   await writeFile(path.join(root, "src/a.py"), "def renamed():\n    return 'latest'\n");
   const renamed = await session.prepare({ requestId: "provider-rename", resultIds: ["native-1"], budgetBytes: 4096 });
-  const renamedUnits = decodeProjectionUnits(decodedProjection(renamed));
+  const renamedUnits = projectedUnits(renamed);
   assert.equal(renamedUnits[0].kind, "file");
   assert.equal(renamed.selected[0], observation.unit_id);
   assert.match(renamed.replacements[0].marker, new RegExp(`\\[${observation.unit_id}`, "u"));
@@ -82,7 +80,7 @@ test("newer active symbols win over an older active file and overlapping bytes a
     turn: 2,
   });
   const plan = await session.prepare({ requestId: "provider-2", resultIds: ["full", "part"], budgetBytes: 4096 });
-  const units = decodeProjectionUnits(decodedProjection(plan));
+  const units = projectedUnits(plan);
   assert.equal(units.length, 1);
   assert.equal(units[0].kind, "symbol");
   assert.equal(plan.omitted[0].reason, "overlap");
@@ -127,7 +125,7 @@ test("projection bytes are identical when membership and disk stay the same and 
   );
   assert.equal(second, first);
   assert.deepEqual(
-    decodeProjectionUnits(first).map((unit) => unit.path),
+    decodeUnits(first).map((unit) => unit.path),
     Object.keys(files).sort((left, right) => left.localeCompare(right)),
   );
 });
@@ -149,16 +147,11 @@ test("a stale plan is rejected and commit is otherwise idempotent", async (t) =>
 test("archive recovery survives a process restart and returns exact UTF-8 bytes", async (t) => {
   const source = "def café():\n    return 'é'\n";
   const root = await workspaceFor(t, { "a.py": source });
-  const workspace = await openWorkspace(root);
-  const firstStore = await openSessionStore(workspace, "restart");
-  const first = new FreshCtxSession({ workspace, store: firstStore, sessionId: "restart" });
+  const first = await sessionFor(t, root);
   const observed = await first.observe({ resultId: "r", path: "a.py", content: content(source), range: null, turn: 1 });
-  const revision = revisionFor(source);
-  await firstStore.close();
-  const secondStore = await openSessionStore(workspace, "restart");
-  t.after(async () => secondStore.close());
-  const second = new FreshCtxSession({ workspace, store: secondStore, sessionId: "restart" });
-  const recovered = await second.recover({ unitId: observed.unit_id, revision });
+  await first.store.close();
+  const second = await sessionFor(t, root);
+  const recovered = await second.recover({ unitId: observed.unit_id, revision: revisionFor(source) });
   assert.deepEqual(Buffer.from(recovered.content_utf8_base64, "base64"), Buffer.from(source));
 });
 
@@ -180,7 +173,7 @@ test("a partial fragment is never recoverable as if it were the whole symbol", a
     (error) => error instanceof FreshCtxError && error.code === "unknown_revision",
   );
   const plan = await session.prepare({ requestId: "fragment-plan", resultIds: ["fragment"], budgetBytes: 4096 });
-  const [projected] = decodeProjectionUnits(decodedProjection(plan));
+  const [projected] = projectedUnits(plan);
   assert.equal(projected.kind, "symbol");
   assert.match(projected.content, /def top/u);
   assert.notEqual(projected.content, fragment);
@@ -192,9 +185,7 @@ test("reserved JavaScript property names remain stable host result and request i
   const source = "def top():\n    return 1\n";
   const identities = ["toString", "constructor", "__proto__"];
   const root = await workspaceFor(t, { "a.py": source });
-  const workspace = await openWorkspace(root);
-  const firstStore = await openSessionStore(workspace, "reserved-identities");
-  const first = new FreshCtxSession({ workspace, store: firstStore, sessionId: "reserved-identities" });
+  const first = await sessionFor(t, root);
   const plans = new Map();
 
   for (const identity of identities) {
@@ -210,15 +201,14 @@ test("reserved JavaScript property names remain stable host result and request i
   }
   assert.equal((await first.status()).counts.observations, identities.length);
   assert.equal((await first.status()).counts.committed_plans, identities.length);
-  await firstStore.close();
+  await first.store.close();
 
-  const secondStore = await openSessionStore(workspace, "reserved-identities");
-  t.after(async () => secondStore.close());
-  const second = new FreshCtxSession({ workspace, store: secondStore, sessionId: "reserved-identities" });
-  for (const record of [secondStore.state.observations, secondStore.state.units, secondStore.state.pendingPlans, secondStore.state.committedPlans]) {
+  const second = await sessionFor(t, root);
+  const { observations, units, pendingPlans, committedPlans } = second.store.state;
+  for (const record of [observations, units, pendingPlans, committedPlans]) {
     assert.equal(Object.getPrototypeOf(record), null);
   }
-  assert.equal(Object.hasOwn(secondStore.state.observations, "__proto__"), true);
+  assert.equal(Object.hasOwn(observations, "__proto__"), true);
   assert.equal((await second.observe({ resultId: "__proto__", path: "a.py", content: content(source), range: null, turn: 1 })).idempotent, true);
   for (const identity of identities) {
     assert.deepEqual(await second.prepare({ requestId: identity, resultIds: [identity], budgetBytes: 4096 }), plans.get(identity));
@@ -236,7 +226,7 @@ test("deleted, binary, and parser-broken sources cannot revive stale code", asyn
   assert.equal(deleted.unresolved[0].reason, "deleted");
   await writeFile(path.join(root, "a.py"), "def broken(\n");
   const broken = await session.prepare({ requestId: "broken", resultIds: ["r"], budgetBytes: 4096 });
-  const brokenUnits = decodeProjectionUnits(decodedProjection(broken));
+  const brokenUnits = projectedUnits(broken);
   assert.equal(brokenUnits[0].kind, "file");
   assert.match(brokenUnits[0].content, /def broken/u);
   await writeFile(path.join(root, "a.py"), Buffer.from([0, 1, 2]));
@@ -259,7 +249,7 @@ test("unsupported languages fall back to the current complete file", async (t) =
   });
   await writeFile(path.join(root, "note.txt"), after);
   const plan = await session.prepare({ requestId: "txt-current", resultIds: ["txt"], budgetBytes: 4096 });
-  const [unit] = decodeProjectionUnits(decodedProjection(plan));
+  const [unit] = projectedUnits(plan);
   assert.equal(unit.kind, "file");
   assert.equal(unit.content, after);
 });
@@ -327,7 +317,7 @@ test("current symbols resolve from every vendored Tree-sitter grammar", async (t
     });
     await writeFile(path.join(root, sourcePath), before.replace(oldValue, currentValue));
     const plan = await session.prepare({ requestId: "current", resultIds: ["native"], budgetBytes: 4096 });
-    const [unit] = decodeProjectionUnits(decodedProjection(plan));
+    const [unit] = projectedUnits(plan);
     assert.equal(unit.kind, "symbol", sourcePath);
     assert.match(unit.content, new RegExp(currentValue, "u"), sourcePath);
   }
@@ -339,7 +329,7 @@ test("content that looks like a FreshCtx delimiter remains exactly framed by con
   const session = await sessionFor(t, root);
   await session.observe({ resultId: "r", path: "a.js", content: content(source), range: null, turn: 1 });
   const plan = await session.prepare({ requestId: "delimiter", resultIds: ["r"], budgetBytes: 4096 });
-  const [unit] = decodeProjectionUnits(decodedProjection(plan));
+  const [unit] = projectedUnits(plan);
   assert.equal(unit.content, source);
 });
 
@@ -382,11 +372,10 @@ test("a header range stays a region slice and does not teach unread symbols are 
     budgetBytes: 8192,
   });
   const text = decodedProjection(plan);
-  const [unit] = decodeProjectionUnits(text);
+  const [unit] = decodeUnits(text);
 
   assert.equal(unit.kind, "region");
   assert.equal(plan.selected[0], observed.unit_id);
-  assert.match(unit.lines, /^1-\d+$/u);
   assert.doesNotMatch(unit.content, /computeDailyLedgerTotal/u);
   assert.doesNotMatch(text, /current workspace state/iu);
   assert.doesNotMatch(text, /computeDailyLedgerTotal/u);
@@ -407,7 +396,7 @@ test("a header range stays a region slice and does not teach unread symbols are 
     resultIds: ["header", "total"],
     budgetBytes: 8192,
   });
-  const units = decodeProjectionUnits(decodedProjection(both));
+  const units = projectedUnits(both);
   const symbol = units.find((item) => item.kind === "symbol");
   assert.ok(both.selected.includes(later.unit_id));
   assert.equal(symbol.kind, "symbol");
@@ -419,19 +408,27 @@ test("prepare after a store reopen refreshes current disk bytes for a new reques
   const before = "function top() { return 1; }\n";
   const after = "function top() { return 2; }\n";
   const root = await workspaceFor(t, { "a.js": before });
-  const workspace = await openWorkspace(root);
-  const firstStore = await openSessionStore(workspace, "live-restart");
-  const first = new FreshCtxSession({ workspace, store: firstStore, sessionId: "live-restart" });
+  const first = await sessionFor(t, root);
   await first.observe({ resultId: "r", path: "a.js", content: content(before), range: null, turn: 1 });
-  await firstStore.close();
+  await first.store.close();
   await writeFile(path.join(root, "a.js"), after);
-  const secondStore = await openSessionStore(workspace, "live-restart");
-  t.after(async () => secondStore.close());
-  const second = new FreshCtxSession({ workspace, store: secondStore, sessionId: "live-restart" });
+  const second = await sessionFor(t, root);
   const plan = await second.prepare({ requestId: "after-restart", resultIds: ["r"], budgetBytes: 4096 });
-  const [unit] = decodeProjectionUnits(decodedProjection(plan));
+  const [unit] = projectedUnits(plan);
   assert.match(unit.content, /return 2/u);
   assert.doesNotMatch(unit.content, /return 1/u);
+});
+
+test("an unavailable observed file can be reopened and later refreshed", async (t) => {
+  const root = await workspaceFor(t);
+  const session = await sessionFor(t, root);
+  await session.observe({ resultId: "r", path: "gone.py", content: content("VALUE = 1\n"), range: null, turn: 1 });
+  await session.store.close();
+  const reopened = await sessionFor(t, root);
+  await writeFile(path.join(root, "gone.py"), "VALUE = 2\n");
+  const plan = await reopened.prepare({ requestId: "q", resultIds: ["r"], budgetBytes: 4096 });
+  assert.match(decodedProjection(plan), /VALUE = 2/u);
+  assert.doesNotMatch(decodedProjection(plan), /VALUE = 1/u);
 });
 
 test("symbol file-fallback does not clobber a sibling file unit or forget the selector", async (t) => {
@@ -462,7 +459,7 @@ test("symbol file-fallback does not clobber a sibling file unit or forget the se
     resultIds: ["full", "part"],
     budgetBytes: 4096,
   });
-  const fallbackUnits = decodeProjectionUnits(decodedProjection(fallback));
+  const fallbackUnits = projectedUnits(fallback);
   assert.equal(fallbackUnits.length, 1);
   assert.equal(fallbackUnits[0].kind, "file");
   assert.equal(fallbackUnits[0].content, renamed);
@@ -474,7 +471,7 @@ test("symbol file-fallback does not clobber a sibling file unit or forget the se
     resultIds: ["part"],
     budgetBytes: 4096,
   });
-  const [unit] = decodeProjectionUnits(decodedProjection(again));
+  const [unit] = projectedUnits(again);
   assert.equal(unit.kind, "symbol");
   assert.match(unit.content, /return 3/u);
   assert.doesNotMatch(unit.content, /def other/u);
@@ -611,7 +608,7 @@ test("prepare refreshes several symbols from one file without changing commit fr
     });
   }
   const plan = await session.prepare({ requestId: "shared-parse", resultIds: names, budgetBytes: 4096 });
-  const units = decodeProjectionUnits(decodedProjection(plan));
+  const units = projectedUnits(plan);
   assert.equal(units.length, 3);
   assert.deepEqual(units.map((unit) => unit.kind), ["symbol", "symbol", "symbol"]);
   await writeFile(path.join(root, "a.py"), source.replace("return 1", "return 9"));
@@ -621,34 +618,50 @@ test("prepare refreshes several symbols from one file without changing commit fr
   );
 });
 
-test("a missing region fingerprint revision leaves a sibling observation preparable", async (t) => {
-  const regionSource = "RATE = 10\nOTHER = 1\n";
-  const siblingSource = "def ok():\n    return 1\n";
-  const root = await workspaceFor(t, { "a.py": regionSource, "b.py": siblingSource });
-  const session = await sessionFor(t, root);
-  const region = await session.observe({
-    resultId: "region",
-    path: "a.py",
-    content: content("RATE = 10"),
-    range: { startByte: 0, endByte: Buffer.byteLength("RATE = 10") },
-    turn: 1,
-  });
-  const sibling = await session.observe({
-    resultId: "ok",
-    path: "b.py",
-    content: content(siblingSource),
-    range: null,
-    turn: 1,
-  });
-  const stored = session.store.state.units[region.unit_id];
-  stored.referentRevision = "not-a-revision";
-  await session.store.save();
-  const plan = await session.prepare({
-    requestId: "both",
-    resultIds: ["region", "ok"],
-    budgetBytes: 4096,
-  });
-  assert.ok(plan.unresolved.some((entry) => entry.result_id === "region"));
-  assert.ok(plan.selected.includes(sibling.unit_id));
-  assert.match(decodedProjection(plan), /def ok/u);
+test("a missing or corrupt region fingerprint leaves a sibling observation preparable", async (t) => {
+  const cases = [
+    {
+      reason: "unknown_revision",
+      damage: async (session, stored) => {
+        stored.referentRevision = "not-a-revision";
+        await session.store.save();
+      },
+    },
+    {
+      reason: "blob_corrupt",
+      damage: async (session, stored, root) => {
+        await writeFile(path.join(blobDirectory(root), digestFromRevision(stored.referentRevision)), "RATE = 99");
+      },
+    },
+  ];
+  for (const { reason, damage } of cases) {
+    await t.test(reason, async (t) => {
+      const siblingSource = "def ok():\n    return 1\n";
+      const root = await workspaceFor(t, { "a.py": "RATE = 10\nOTHER = 1\n", "b.py": siblingSource });
+      const session = await sessionFor(t, root);
+      const region = await session.observe({
+        resultId: "region",
+        path: "a.py",
+        content: content("RATE = 10"),
+        range: { startByte: 0, endByte: Buffer.byteLength("RATE = 10") },
+        turn: 1,
+      });
+      const sibling = await session.observe({
+        resultId: "ok",
+        path: "b.py",
+        content: content(siblingSource),
+        range: null,
+        turn: 1,
+      });
+      await damage(session, session.store.state.units[region.unit_id], root);
+      const plan = await session.prepare({
+        requestId: "both",
+        resultIds: ["region", "ok"],
+        budgetBytes: 4096,
+      });
+      assert.deepEqual(plan.unresolved, [{ result_id: "region", unit_id: region.unit_id, path: "a.py", reason }]);
+      assert.deepEqual(plan.selected, [sibling.unit_id]);
+      assert.match(decodedProjection(plan), /def ok/u);
+    });
+  }
 });

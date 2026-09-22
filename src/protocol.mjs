@@ -1,4 +1,5 @@
 import { fail } from "./errors.mjs";
+import { isRevision } from "./hash.mjs";
 
 export const PROTOCOL = "freshctx/1";
 export const VERSION = "0.1.0";
@@ -8,6 +9,12 @@ export const REQUIRED_CAPABILITIES = Object.freeze([
   "projection_insertion",
   "shared_workspace",
 ]);
+
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function requiredString(value, field) {
   if (typeof value !== "string" || value.length === 0) {
@@ -31,107 +38,94 @@ function requiredStringField(record, field) {
   return requiredString(requiredField(record, field), field);
 }
 
-function requiredSafeInteger(value, field, { minimum = 0 } = {}) {
+function requiredSafeInteger(value, field, minimum = 0) {
   if (!Number.isSafeInteger(value) || value < minimum) {
     fail("invalid_request", `${field} must be an integer of at least ${minimum}`);
   }
   return value;
 }
 
-function requiredArray(value, field) {
-  if (!Array.isArray(value)) fail("invalid_request", `${field} must be an array`);
-  return value;
-}
-
-export function decodeUtf8Base64(value, field = "content_utf8_base64") {
-  if (typeof value !== "string") fail("invalid_request", `${field} must be a base64 string`);
-  if (!/^[A-Za-z0-9+/_-]*={0,2}$/u.test(value) || /=/u.test(value.slice(0, -2))) {
-    fail("invalid_request", `${field} must be base64 or base64url`);
+export function decodeUtf8Base64(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9+/_-]*={0,2}$/u.test(value)) {
+    fail("invalid_request", "content_utf8_base64 must be base64 or base64url");
   }
   if (value.includes("=") && value.length % 4 !== 0) {
-    fail("invalid_request", `${field} has invalid base64 padding`);
+    fail("invalid_request", "content_utf8_base64 has invalid base64 padding");
   }
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
-  const unpadded = normalized.replace(/=+$/u, "");
-  if (unpadded.length % 4 === 1) fail("invalid_request", `${field} has an invalid base64 length`);
-  const padded = `${unpadded}${"=".repeat((4 - (unpadded.length % 4)) % 4)}`;
-  const bytes = Buffer.from(padded, "base64");
-  if (bytes.toString("base64") !== padded) fail("invalid_request", `${field} must be valid base64`);
+  const unpadded = value.replace(/=+$/u, "").replaceAll("-", "+").replaceAll("_", "/");
+  const bytes = Buffer.from(unpadded, "base64");
+  if (bytes.toString("base64").replace(/=+$/u, "") !== unpadded) {
+    fail("invalid_request", "content_utf8_base64 must be valid base64");
+  }
   try {
-    return { bytes, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) };
+    return { bytes, text: utf8.decode(bytes) };
   } catch {
-    fail("non_utf8", `${field} does not encode UTF-8 text`);
+    fail("non_utf8", "content_utf8_base64 does not encode UTF-8 text");
   }
 }
 
 function parseRange(value) {
   if (value === undefined) return null;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    fail("invalid_request", "range must be an object");
-  }
+  if (!isObject(value)) fail("invalid_request", "range must be an object");
   const startByte = requiredSafeInteger(requiredField(value, "start_byte"), "range.start_byte");
-  const endByte = requiredSafeInteger(requiredField(value, "end_byte"), "range.end_byte", { minimum: startByte + 1 });
+  const endByte = requiredSafeInteger(requiredField(value, "end_byte"), "range.end_byte", startByte + 1);
   return { startByte, endByte };
 }
 
 export function parseRequest(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    fail("invalid_request", "request must be an object");
-  }
-  if (!Object.hasOwn(value, "protocol") || value.protocol !== PROTOCOL) fail("unsupported_protocol", `expected ${PROTOCOL}`);
+  if (!isObject(value)) fail("invalid_request", "request must be an object");
+  if (optionalField(value, "protocol") !== PROTOCOL) fail("unsupported_protocol", `expected ${PROTOCOL}`);
   const id = requiredStringField(value, "id");
   const op = requiredStringField(value, "op");
-  const request = { id, op };
   switch (op) {
     case "hello": {
-      request.sessionId = requiredStringField(value, "session_id");
+      const sessionId = requiredStringField(value, "session_id");
       const capabilities = requiredField(value, "capabilities");
-      if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
-        fail("invalid_request", "capabilities must be an object");
-      }
+      if (!isObject(capabilities)) fail("invalid_request", "capabilities must be an object");
       for (const capability of REQUIRED_CAPABILITIES) {
-        if (!Object.hasOwn(capabilities, capability) || capabilities[capability] !== true) {
+        if (optionalField(capabilities, capability) !== true) {
           fail("host_incompatible", `host lacks required capability: ${capability}`);
         }
       }
-      request.capabilities = Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [key, true]));
-      const adapter = optionalField(value, "adapter");
-      request.adapter = typeof adapter === "string" ? adapter : "unknown";
-      return request;
+      return { id, op, sessionId };
     }
-    case "observe":
-      request.resultId = requiredStringField(value, "result_id");
-      request.path = requiredStringField(value, "path");
-      request.content = decodeUtf8Base64(requiredField(value, "content_utf8_base64"));
-      request.range = parseRange(optionalField(value, "range"));
+    case "observe": {
       const turn = optionalField(value, "turn");
-      request.turn = turn === undefined ? 0 : requiredSafeInteger(turn, "turn");
-      return request;
-    case "prepare":
-      request.requestId = requiredStringField(value, "request_id");
-      request.resultIds = requiredArray(requiredField(value, "result_ids"), "result_ids").map((item) => requiredString(item, "result_ids[]"));
-      if (new Set(request.resultIds).size !== request.resultIds.length) {
-        fail("invalid_request", "result_ids must not contain duplicates");
-      }
-      request.budgetBytes = requiredSafeInteger(requiredField(value, "budget_bytes"), "budget_bytes");
-      const granularity = optionalField(value, "selection_granularity");
-      if (granularity !== undefined && granularity !== "region" && granularity !== "file") {
-        fail("invalid_request", "selection_granularity must be region or file");
-      }
-      request.granularity = granularity;
-      return request;
+      return {
+        id,
+        op,
+        resultId: requiredStringField(value, "result_id"),
+        path: requiredStringField(value, "path"),
+        content: decodeUtf8Base64(requiredField(value, "content_utf8_base64")),
+        range: parseRange(optionalField(value, "range")),
+        turn: turn === undefined ? 0 : requiredSafeInteger(turn, "turn"),
+      };
+    }
+    case "prepare": {
+      const requestId = requiredStringField(value, "request_id");
+      const listed = requiredField(value, "result_ids");
+      if (!Array.isArray(listed)) fail("invalid_request", "result_ids must be an array");
+      const resultIds = listed.map((item) => requiredString(item, "result_ids[]"));
+      if (new Set(resultIds).size !== resultIds.length) fail("invalid_request", "result_ids must not contain duplicates");
+      return {
+        id,
+        op,
+        requestId,
+        resultIds,
+        budgetBytes: requiredSafeInteger(requiredField(value, "budget_bytes"), "budget_bytes"),
+        granularity: optionalField(value, "selection_granularity"),
+      };
+    }
     case "commit":
-      request.planId = requiredStringField(value, "plan_id");
-      return request;
-    case "recover":
-      request.unitId = requiredStringField(value, "unit_id");
-      request.revision = requiredStringField(value, "revision");
-      if (!/^sha256:[a-f0-9]{64}$/u.test(request.revision)) {
-        fail("invalid_request", "revision must be a sha256 revision");
-      }
-      return request;
+      return { id, op, planId: requiredStringField(value, "plan_id") };
+    case "recover": {
+      const unitId = requiredStringField(value, "unit_id");
+      const revision = requiredStringField(value, "revision");
+      if (!isRevision(revision)) fail("invalid_request", "revision must be a sha256 revision");
+      return { id, op, unitId, revision };
+    }
     case "status":
-      return request;
+      return { id, op };
     default:
       fail("unknown_operation", `unknown operation: ${op}`);
   }

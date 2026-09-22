@@ -4,13 +4,13 @@ import path from "node:path";
 import test from "node:test";
 
 import { FreshCtxError } from "../src/errors.mjs";
-import { stableId } from "../src/hash.mjs";
+import { compactUnitId } from "../src/hash.mjs";
 import { cleanStore, initializeStore, openSessionStore } from "../src/store.mjs";
 import { addWorkspaceExclude, normalizeRelativePath, openWorkspace, readStableText } from "../src/workspace.mjs";
 import { workspaceFor } from "./helpers.mjs";
 
 function sessionLockPath(root, sessionId) {
-  return path.join(root, ".freshctx", "locks", `${stableId("session", { sessionId }).slice("session_".length)}.lock`);
+  return path.join(root, ".freshctx", "locks", `${compactUnitId({ sessionId })}.lock`);
 }
 
 async function rejection(action, code) {

@@ -1,92 +1,35 @@
 import { FreshCtxError, fail } from "./errors.mjs";
 import {
   compactUnitId,
-  equalBytes,
   fileUnitIdentity,
+  isRevision,
   regionUnitIdentity,
   revisionFor,
   stableId,
   symbolUnitIdentity,
 } from "./hash.mjs";
 import { buildProjection, stableMarker, unavailableMarker } from "./projection.mjs";
-import { VERSION } from "./protocol.mjs";
+import { PROTOCOL, VERSION } from "./protocol.mjs";
 import { anchorsFor, enclosingParsedUnit, findByteOccurrences, relocateRegion } from "./relocate.mjs";
-import { parseUnits, supportedLanguages, uniqueUnitForRange } from "./treesitter.mjs";
+import { parseUnits, supportedLanguages } from "./treesitter.mjs";
 import { DEFAULT_MAX_SOURCE_BYTES, normalizeRelativePath, readStableText } from "./workspace.mjs";
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
+export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
+export const MAX_PENDING_PLANS = 16;
 
-function recordValue(record, key) {
-  return Object.hasOwn(record, key) ? record[key] : undefined;
-}
-
-function setRecordValue(record, key, value) {
-  Object.defineProperty(record, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
-}
-
-function deleteRecordValue(record, key) {
-  if (Object.hasOwn(record, key)) delete record[key];
-}
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function sameRange(left, right) {
   return (left?.startByte ?? null) === (right?.startByte ?? null)
     && (left?.endByte ?? null) === (right?.endByte ?? null);
 }
 
-function fileUnitId(sourcePath) {
-  return compactUnitId(fileUnitIdentity(sourcePath));
-}
-
-function regionOccurrence(snapshotBytes, range, anchors, parentSelector, parsedUnits = []) {
-  const referent = snapshotBytes.subarray(range.startByte, range.endByte);
-  if (referent.length === 0) return 0;
-  let index = 0;
-  for (const at of findByteOccurrences(snapshotBytes, referent)) {
-    if (at === range.startByte) return index;
-    const end = at + referent.length;
-    const atAnchors = anchorsFor(snapshotBytes, at, end);
-    if (atAnchors.prefixAnchor !== anchors.prefixAnchor || atAnchors.suffixAnchor !== anchors.suffixAnchor) continue;
-    const parent = enclosingParsedUnit(parsedUnits, at, end);
-    if ((parent?.selector ?? null) !== (parentSelector ?? null)) continue;
-    index += 1;
-  }
-  return 0;
-}
-
-function lineRangeForText(text) {
-  const count = text.length === 0 ? 1 : text.split("\n").length;
-  return { startLine: 1, endLine: count };
-}
-
-function linesUpTo(bytes, offset) {
-  if (offset <= 0) return 1;
-  let lines = 1;
-  const limit = Math.min(offset, bytes.length);
-  for (let index = 0; index < limit; index += 1) {
-    if (bytes[index] === 0x0a) lines += 1;
-  }
-  return lines;
-}
-
-function lineRangeForByteSpan(bytes, startByte, endByte) {
-  const startLine = linesUpTo(bytes, startByte);
-  const last = Math.max(startByte, endByte - 1);
-  return { startLine, endLine: linesUpTo(bytes, last) };
-}
-
-function utf8Slice(bytes, startByte, endByte) {
-  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(startByte, endByte));
-}
-
 function reasonFor(error) {
   return error instanceof FreshCtxError ? error.code : "resolution_failed";
+}
+
+function unresolved(reason) {
+  return { state: "unresolved", reason };
 }
 
 function appendRevision(unit, revision) {
@@ -94,73 +37,76 @@ function appendRevision(unit, revision) {
   if (!unit.revisions.includes(revision)) unit.revisions.push(revision);
 }
 
-function unresolvedUnit({ id, sourcePath, kind, selector = null, observedAt, reason }) {
-  return {
-    id,
-    ...(kind === "file" ? { identity: fileUnitIdentity(sourcePath) } : {}),
-    path: sourcePath,
-    kind,
-    selector,
-    observedAt,
-    state: "unresolved",
-    reason,
-    revisions: [],
-  };
+function persistable(unit) {
+  const { content, relocation, previousRange, ...stored } = unit;
+  return stored;
+}
+
+function normalizeGranularity(value) {
+  if (value === undefined) return "region";
+  if (value === "region" || value === "file") return value;
+  fail("invalid_request", "selection_granularity must be region or file");
+}
+
+async function readSnapshot(workspace, sourcePath) {
+  const snapshot = await readStableText(workspace, sourcePath);
+  return { ...snapshot, revision: revisionFor(snapshot.bytes) };
+}
+
+function fileUnit(sourcePath, observedAt) {
+  const identity = fileUnitIdentity(sourcePath);
+  return { id: compactUnitId(identity), identity, path: sourcePath, kind: "file", selector: null, observedAt };
 }
 
 function resolvedFile({ sourcePath, observedAt, snapshot, resolution = "file" }) {
-  const revision = revisionFor(snapshot.bytes);
-  const lines = lineRangeForText(snapshot.text);
-  const identity = fileUnitIdentity(sourcePath);
   return {
-    id: compactUnitId(identity),
-    identity,
-    path: sourcePath,
-    kind: "file",
-    selector: null,
-    observedAt,
+    ...fileUnit(sourcePath, observedAt),
     state: "resolved",
     resolution,
-    sourceRevision: revision,
-    revision,
+    sourceRevision: snapshot.revision,
+    revision: snapshot.revision,
     startByte: 0,
     endByte: snapshot.bytes.length,
-    ...lines,
     content: snapshot.text,
   };
 }
 
-function resolvedRegion({
-  sourcePath,
-  observedAt,
-  snapshot,
-  range,
-  resolution = "region",
-  parent = null,
-  fingerprint = null,
-  occurrence = 0,
-  parsedUnits = [],
-}) {
+function resolvedSymbol({ sourcePath, observedAt, snapshot, symbol }) {
+  const identity = symbolUnitIdentity(sourcePath, symbol.selector);
+  const bytes = snapshot.bytes.subarray(symbol.startByte, symbol.endByte);
+  return {
+    id: compactUnitId(identity),
+    identity,
+    path: sourcePath,
+    kind: "symbol",
+    selector: symbol.selector,
+    observedAt,
+    state: "resolved",
+    resolution: "symbol",
+    sourceRevision: snapshot.revision,
+    revision: revisionFor(bytes),
+    startByte: symbol.startByte,
+    endByte: symbol.endByte,
+    content: utf8.decode(bytes),
+  };
+}
+
+function observedRegionIdentity({ sourcePath, snapshot, range, anchors, revision, occurrences }) {
+  const identity = regionUnitIdentity(sourcePath, revision, anchors.prefixAnchor, anchors.suffixAnchor, null);
+  const length = range.endByte - range.startByte;
+  const twins = occurrences.filter((at) => {
+    const candidate = anchorsFor(snapshot.bytes, at, at + length);
+    return candidate.prefixAnchor === anchors.prefixAnchor && candidate.suffixAnchor === anchors.suffixAnchor;
+  });
+  if (twins.length > 1) identity.occurrenceStart = range.startByte;
+  return identity;
+}
+
+function resolvedRegion({ sourcePath, observedAt, snapshot, range, anchors, parent = null, identity = null }) {
   const bytes = snapshot.bytes.subarray(range.startByte, range.endByte);
   const revision = revisionFor(bytes);
-  const observedText = utf8Slice(snapshot.bytes, range.startByte, range.endByte);
-  const anchors = fingerprint ?? anchorsFor(snapshot.bytes, range.startByte, range.endByte);
-  const identity = regionUnitIdentity(
-    sourcePath,
-    revision,
-    anchors.prefixAnchor,
-    anchors.suffixAnchor,
-    parent?.selector ?? null,
-  );
   const occurrences = findByteOccurrences(snapshot.bytes, bytes);
-  const repeatedFingerprint = occurrences.filter(start => {
-    const candidate = anchorsFor(snapshot.bytes, start, start + bytes.length);
-    return candidate.prefixAnchor === anchors.prefixAnchor && candidate.suffixAnchor === anchors.suffixAnchor;
-  }).length > 1;
-  if (repeatedFingerprint) identity.occurrenceStart = range.startByte;
-  const occurrenceIndex = fingerprint
-    ? occurrence
-    : regionOccurrence(snapshot.bytes, range, anchors, parent?.selector ?? null, parsedUnits);
+  identity ??= observedRegionIdentity({ sourcePath, snapshot, range, anchors, revision, occurrences });
   return {
     id: compactUnitId(identity),
     identity,
@@ -169,150 +115,89 @@ function resolvedRegion({
     selector: null,
     observedAt,
     state: "resolved",
-    resolution,
-    sourceRevision: revisionFor(snapshot.bytes),
+    resolution: "region",
+    sourceRevision: snapshot.revision,
     revision,
     referentRevision: revision,
     referentOccurrences: occurrences.length,
     startByte: range.startByte,
     endByte: range.endByte,
-    ...lineRangeForByteSpan(snapshot.bytes, range.startByte, range.endByte),
-    content: observedText,
+    content: utf8.decode(bytes),
     prefixAnchor: anchors.prefixAnchor,
     suffixAnchor: anchors.suffixAnchor,
     parentSelector: parent?.selector ?? null,
-    occurrence: occurrenceIndex,
-    observedLength: bytes.length,
     ...(parent
       ? { relativeStart: range.startByte - parent.startByte, relativeEnd: range.endByte - parent.startByte }
       : {}),
   };
 }
 
-function parentForRange(parsed, startByte, endByte) {
-  if (!parsed || parsed.status !== "ok") return null;
-  return enclosingParsedUnit(parsed.units, startByte, endByte);
-}
-
-function resolvedSymbol({ sourcePath, observedAt, snapshot, parsed }) {
-  const bytes = snapshot.bytes.subarray(parsed.startByte, parsed.endByte);
-  const revision = revisionFor(bytes);
-  const identity = symbolUnitIdentity(sourcePath, parsed.selector);
-  return {
-    id: compactUnitId(identity),
-    identity,
-    path: sourcePath,
-    kind: "symbol",
-    selector: parsed.selector,
-    language: parsed.language,
-    symbolKind: parsed.symbolKind,
-    observedAt,
-    state: "resolved",
-    resolution: "symbol",
-    sourceRevision: revisionFor(snapshot.bytes),
-    revision,
-    startByte: parsed.startByte,
-    endByte: parsed.endByte,
-    startLine: parsed.startLine,
-    endLine: parsed.endLine,
-    content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
-  };
-}
-
-function persistable(unit) {
-  const { content, ...stored } = unit;
-  return stored;
-}
-
-export const SELECTION_GRANULARITY_REGION = "region";
-export const SELECTION_GRANULARITY_FILE = "file";
-
-function normalizeGranularity(value) {
-  if (value === undefined) return SELECTION_GRANULARITY_REGION;
-  if (value === SELECTION_GRANULARITY_REGION || value === SELECTION_GRANULARITY_FILE) return value;
-  fail("invalid_request", "selection_granularity must be region or file");
-}
-
-function planFingerprint(request) {
-  return JSON.stringify({
-    resultIds: [...request.resultIds].sort(),
-    budgetBytes: request.budgetBytes,
-    granularity: normalizeGranularity(request.granularity),
-  });
-}
-
-export const PENDING_PLAN_TTL_MS = 30 * 60 * 1000;
-export const MAX_PENDING_PLANS = 16;
-
-class PrepareSourceCache {
-  constructor() {
-    this.byPath = new Map();
+class SourceCache {
+  constructor(workspace) {
+    this.workspace = workspace;
+    this.entries = new Map();
   }
 
-  static async snapshot(cache, workspace, sourcePath) {
-    const existing = cache.byPath.get(sourcePath);
-    if (existing) return existing.snapshot;
-    const snapshot = await readStableText(workspace, sourcePath);
-    cache.byPath.set(sourcePath, { snapshot, parsed: undefined });
-    return snapshot;
-  }
-
-  static async parsed(cache, sourcePath) {
-    const entry = cache.byPath.get(sourcePath);
-    if (entry.parsed === undefined) {
-      entry.parsed = await parseUnits({ path: sourcePath, text: entry.snapshot.text });
+  async snapshot(sourcePath) {
+    if (!this.entries.has(sourcePath)) {
+      this.entries.set(sourcePath, { snapshot: await readSnapshot(this.workspace, sourcePath), parsed: null });
     }
+    return this.entries.get(sourcePath).snapshot;
+  }
+
+  async parsed(sourcePath) {
+    const entry = this.entries.get(sourcePath);
+    entry.parsed ??= await parseUnits({ path: sourcePath, text: entry.snapshot.text });
     return entry.parsed;
   }
 }
 
-class StoredPlan {
-  static compact(response) {
-    const { projection_utf8_base64: _omit, ...compact } = response;
-    return compact;
-  }
+function compactResponse(response) {
+  const { projection_utf8_base64: _omit, ...compact } = response;
+  return structuredClone(compact);
+}
 
-  static async hydrate(store, record) {
-    const response = clone(record.response);
-    if (Object.hasOwn(response, "projection_utf8_base64")) return response;
-    const bytes = await store.getBlob(response.projection_sha256);
-    if (!bytes) fail("missing_blob", "archived projection is unavailable");
-    response.projection_utf8_base64 = bytes.toString("base64");
-    return response;
-  }
-
-  static dropExpiredPending(state, now = Date.now()) {
-    let changed = false;
-    for (const [requestId, plan] of Object.entries(state.pendingPlans)) {
-      if (!Number.isSafeInteger(plan.preparedAt) || now - plan.preparedAt <= PENDING_PLAN_TTL_MS) continue;
-      deleteRecordValue(state.pendingPlans, requestId);
+function dropExpiredPending(pendingPlans) {
+  const now = Date.now();
+  let changed = false;
+  for (const [requestId, plan] of Object.entries(pendingPlans)) {
+    if (Number.isSafeInteger(plan.preparedAt) && now - plan.preparedAt > PENDING_PLAN_TTL_MS) {
+      delete pendingPlans[requestId];
       changed = true;
     }
-    return changed;
   }
+  return changed;
+}
 
-  static boundPending(state) {
-    const entries = Object.entries(state.pendingPlans);
-    if (entries.length <= MAX_PENDING_PLANS) return;
-    const ranked = entries
-      .map(([requestId, plan], index) => ({ requestId, plan, index }))
-      .sort((left, right) => {
-        const byTime = (left.plan.preparedAt ?? 0) - (right.plan.preparedAt ?? 0);
-        if (byTime !== 0) return byTime;
-        return left.index - right.index;
-      });
-    for (const { requestId } of ranked.slice(0, entries.length - MAX_PENDING_PLANS)) {
-      deleteRecordValue(state.pendingPlans, requestId);
-    }
+function boundPending(pendingPlans) {
+  const entries = Object.entries(pendingPlans);
+  const excess = entries.length - MAX_PENDING_PLANS;
+  if (excess <= 0) return;
+  entries.sort(([, left], [, right]) => (left.preparedAt ?? 0) - (right.preparedAt ?? 0));
+  for (const [requestId] of entries.slice(0, excess)) delete pendingPlans[requestId];
+}
+
+function unitState(unit) {
+  return {
+    status: unit.kind === "region" ? unit.relocation : unit.resolution === "file-fallback" ? "updated" : "stable",
+    previousRange: unit.previousRange ?? null,
+    currentRange: { startByte: unit.startByte, endByte: unit.endByte },
+  };
+}
+
+async function wholeFileEquivalent(sources, selected) {
+  const files = [];
+  for (const filePath of [...new Set(selected.map((unit) => unit.path))].sort((left, right) => left.localeCompare(right))) {
+    files.push({ path: filePath, bytes: (await sources.snapshot(filePath)).bytes.length });
   }
+  return { files, whole_file_bytes: files.reduce((total, file) => total + file.bytes, 0) };
 }
 
 export class FreshCtxSession {
-  constructor({ workspace, store, sessionId, adapter = "unknown" }) {
+  constructor({ workspace, store, sessionId }) {
     this.workspace = workspace;
     this.store = store;
     this.sessionId = sessionId;
-    this.adapter = adapter;
   }
 
   async observe(request) {
@@ -323,146 +208,101 @@ export class FreshCtxSession {
     if (request.content.bytes.includes(0)) {
       fail("binary_file", "observed source appears to be binary");
     }
+    const { observations, units } = this.store.state;
     const observedRevision = revisionFor(request.content.bytes);
-    const existing = recordValue(this.store.state.observations, request.resultId);
+    const existing = observations[request.resultId];
     if (existing) {
       if (existing.path !== sourcePath || existing.observedRevision !== observedRevision || !sameRange(existing.range, request.range)) {
         fail("idempotency_conflict", "result_id was already observed with different content");
       }
-      if (existing.unavailable) {
-        const unit = {
-          id: existing.unavailable.legacyUnitId,
-          path: sourcePath,
-        };
-        return {
-          result_id: request.resultId,
-          unit_id: unit.id,
-          marker: unavailableMarker(unit, existing.unavailable.reason),
-          idempotent: true,
-        };
-      }
-      const unit = recordValue(this.store.state.units, existing.unitId);
+      const { unavailable } = existing;
       return {
         result_id: request.resultId,
-        unit_id: existing.unitId,
-        marker: stableMarker(unit ?? { id: existing.unitId, path: sourcePath }),
+        unit_id: unavailable ? unavailable.legacyUnitId : existing.unitId,
+        marker: unavailable ? unavailableMarker(unavailable.legacyUnitId, unavailable.reason) : stableMarker(existing.unitId),
         idempotent: true,
       };
     }
-    await this.store.putBlob(request.content.bytes);
 
     const observedAt = ++this.store.state.sequence;
+    const { range } = request;
     let unit;
     try {
-      const snapshot = await readStableText(this.workspace, sourcePath);
-      const snapshotRevision = revisionFor(snapshot.bytes);
-      const rangeMatchesCurrent = request.range
-        && request.range.endByte <= snapshot.bytes.length
-        && (snapshotRevision === observedRevision
-          || equalBytes(snapshot.bytes.subarray(request.range.startByte, request.range.endByte), request.content.bytes));
+      const snapshot = await readSnapshot(this.workspace, sourcePath);
+      const rangeMatchesCurrent = range
+        && range.endByte <= snapshot.bytes.length
+        && (snapshot.revision === observedRevision
+          || snapshot.bytes.subarray(range.startByte, range.endByte).equals(request.content.bytes));
       if (rangeMatchesCurrent) {
-        const resolved = await uniqueUnitForRange({ path: sourcePath, text: snapshot.text, range: request.range });
-        if (resolved.unit) unit = resolvedSymbol({ sourcePath, observedAt, snapshot, parsed: resolved.unit });
-        else if (resolved.status === "ok" || resolved.status === "ambiguous") {
-          const parent = parentForRange(
-            resolved.status === "ok" ? resolved : { status: "ok", units: [] },
-            request.range.startByte,
-            request.range.endByte,
-          );
-          unit = resolvedRegion({
-            sourcePath,
-            observedAt,
-            snapshot,
-            range: request.range,
-            parent,
-            parsedUnits: Array.isArray(resolved.units) ? resolved.units : [],
-          });
+        const parsed = await parseUnits({ path: sourcePath, text: snapshot.text });
+        if (parsed.status === "ok") {
+          const symbol = enclosingParsedUnit(parsed.units, range.startByte, range.endByte);
+          unit = symbol
+            ? resolvedSymbol({ sourcePath, observedAt, snapshot, symbol })
+            : resolvedRegion({ sourcePath, observedAt, snapshot, range, anchors: anchorsFor(snapshot.bytes, range.startByte, range.endByte) });
         }
       }
-      if (!unit) unit = resolvedFile({ sourcePath, observedAt, snapshot, resolution: request.range ? "file-fallback" : "file" });
+      unit ??= resolvedFile({ sourcePath, observedAt, snapshot, resolution: range ? "file-fallback" : "file" });
     } catch (error) {
-      const id = fileUnitId(sourcePath);
-      unit = unresolvedUnit({
-        id,
-        sourcePath,
-        kind: "file",
-        observedAt,
-        reason: reasonFor(error),
-      });
+      unit = { ...fileUnit(sourcePath, observedAt), state: "unresolved", reason: reasonFor(error), revisions: [] };
     }
 
     const stored = persistable(unit);
-    const previous = recordValue(this.store.state.units, unit.id);
-    if (previous?.revisions) stored.revisions = [...previous.revisions];
-    const observedIsWholeUnit = unit.state === "resolved"
-      ? equalBytes(Buffer.from(unit.content, "utf8"), request.content.bytes)
-      : !request.range;
-    if (observedIsWholeUnit) appendRevision(stored, observedRevision);
+    if (units[unit.id]?.revisions) stored.revisions = [...units[unit.id].revisions];
     if (unit.state === "resolved") {
       await this.store.putBlob(Buffer.from(unit.content, "utf8"));
       appendRevision(stored, unit.revision);
+    } else if (!range) {
+      await this.store.putBlob(request.content.bytes);
+      appendRevision(stored, observedRevision);
     }
-    setRecordValue(this.store.state.units, unit.id, stored);
-    setRecordValue(this.store.state.observations, request.resultId, {
+    units[unit.id] = stored;
+    observations[request.resultId] = {
       resultId: request.resultId,
       path: sourcePath,
-      range: request.range,
+      range,
       observedRevision,
       unitId: unit.id,
       observedAt,
       turn: request.turn,
-    });
+    };
     await this.store.save();
     return {
       result_id: request.resultId,
       unit_id: unit.id,
-      marker: stableMarker(unit),
+      marker: stableMarker(unit.id),
       idempotent: false,
     };
   }
 
   async updateStoredUnit(unit) {
     const stored = persistable(unit);
-    const previous = recordValue(this.store.state.units, unit.id);
-    stored.identity = previous?.identity ?? stored.identity;
-    stored.revisions = [...(previous?.revisions ?? [])];
+    stored.revisions = [...(this.store.state.units[unit.id]?.revisions ?? [])];
     appendRevision(stored, unit.revision);
     await this.store.putBlob(Buffer.from(unit.content, "utf8"));
-    setRecordValue(this.store.state.units, unit.id, stored);
+    this.store.state.units[unit.id] = stored;
     return unit;
   }
 
   async fileFallbackForSymbol(unit, snapshot, observedAt) {
     const file = resolvedFile({ sourcePath: unit.path, observedAt, snapshot, resolution: "file-fallback" });
-    const original = recordValue(this.store.state.units, unit.id);
-    if (original) appendRevision(original, file.revision);
-    await this.store.putBlob(Buffer.from(file.content, "utf8"));
-    return { ...file, id: unit.id, identity: unit.identity };
+    appendRevision(unit, file.revision);
+    await this.store.putBlob(snapshot.bytes);
+    return { ...file, id: unit.id };
   }
 
-  async currentRegion(unit, snapshot, observedAt, parsed = null) {
-    const unresolved = (reason) => unresolvedUnit({
-      id: unit.id,
-      sourcePath: unit.path,
-      kind: "region",
-      observedAt,
-      reason,
-    });
+  async currentRegion(unit, snapshot, observedAt, parsed) {
+    const { prefixAnchor = "", suffixAnchor = "" } = unit;
+    if (typeof prefixAnchor !== "string" || typeof suffixAnchor !== "string") return unresolved("resolution_failed");
+    if (!isRevision(unit.referentRevision)) return unresolved("unknown_revision");
     try {
-      const prefixAnchor = unit.prefixAnchor ?? "";
-      const suffixAnchor = unit.suffixAnchor ?? "";
-      if (typeof prefixAnchor !== "string" || typeof suffixAnchor !== "string") {
-        return unresolved("resolution_failed");
-      }
-      if (typeof unit.referentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(unit.referentRevision)) {
-        return unresolved("unknown_revision");
-      }
       const referentBytes = await this.store.getBlob(unit.referentRevision);
       if (!referentBytes) return unresolved("unknown_revision");
+      const parsedOk = parsed.status === "ok";
       const outcome = relocateRegion({
         snapshotBytes: snapshot.bytes,
-        parsedUnits: parsed?.status === "ok" ? parsed.units : [],
-        parsedOk: parsed?.status === "ok",
+        parsedUnits: parsed.units,
+        parsedOk,
         referentBytes,
         prefixAnchor,
         suffixAnchor,
@@ -471,262 +311,189 @@ export class FreshCtxSession {
         relEnd: unit.relativeEnd ?? null,
         prevStart: unit.startByte,
         prevEnd: unit.endByte,
-        snapshotUnchanged: unit.sourceRevision === revisionFor(snapshot.bytes),
+        snapshotUnchanged: unit.sourceRevision === snapshot.revision,
         previousOccurrences: unit.referentOccurrences ?? null,
       });
-      if (outcome.status === "ambiguous" || outcome.status === "invalidated") {
-        return unresolved(outcome.status === "ambiguous" ? "ambiguous" : "referent_missing");
-      }
-      const parent = parsed?.status === "ok"
-        ? parentForRange(parsed, outcome.startByte, outcome.endByte)
-        : null;
+      if (outcome.status === "ambiguous") return unresolved("ambiguous");
+      if (outcome.status === "invalidated") return unresolved("referent_missing");
+      const range = { startByte: outcome.startByte, endByte: outcome.endByte };
       const candidate = resolvedRegion({
         sourcePath: unit.path,
         observedAt,
         snapshot,
-        range: { startByte: outcome.startByte, endByte: outcome.endByte },
-        parent,
-        fingerprint: { prefixAnchor, suffixAnchor },
-        occurrence: unit.occurrence ?? 0,
+        range,
+        anchors: { prefixAnchor, suffixAnchor },
+        parent: parsedOk ? enclosingParsedUnit(parsed.units, range.startByte, range.endByte) : null,
+        identity: unit.identity,
       });
-      candidate.id = unit.id;
-      candidate.occurrence = unit.occurrence ?? candidate.occurrence;
-      candidate.identity = unit.identity;
       candidate.relocation = outcome.status;
       candidate.previousRange = { startByte: unit.startByte, endByte: unit.endByte };
-      await this.updateStoredUnit(candidate);
-      return candidate;
+      return await this.updateStoredUnit(candidate);
     } catch (error) {
       return unresolved(reasonFor(error));
     }
   }
 
-  async currentCandidate(unit, observedAt, cache = new PrepareSourceCache()) {
+  async currentCandidate(unit, observedAt, sources) {
     let snapshot;
     try {
-      snapshot = await PrepareSourceCache.snapshot(cache, this.workspace, unit.path);
+      snapshot = await sources.snapshot(unit.path);
     } catch (error) {
-      return unresolvedUnit({
-        id: unit.id,
-        sourcePath: unit.path,
-        kind: unit.kind ?? "file",
-        selector: unit.selector,
-        observedAt,
-        reason: reasonFor(error),
-      });
+      return unresolved(reasonFor(error));
     }
     if (unit.kind === "file") {
-      const candidate = resolvedFile({ sourcePath: unit.path, observedAt, snapshot, resolution: "file" });
-      await this.updateStoredUnit(candidate);
-      return candidate;
+      return this.updateStoredUnit(resolvedFile({ sourcePath: unit.path, observedAt, snapshot }));
     }
-    if (unit.kind === "region") {
-      const parsed = await PrepareSourceCache.parsed(cache, unit.path);
-      return this.currentRegion(unit, snapshot, observedAt, parsed);
-    }
-    const parsed = await PrepareSourceCache.parsed(cache, unit.path);
-    const matches = parsed.status === "ok"
-      ? parsed.units.filter((candidate) => candidate.selector === unit.selector)
-      : [];
-    if (matches.length === 1) {
-      const candidate = resolvedSymbol({ sourcePath: unit.path, observedAt, snapshot, parsed: matches[0] });
-      await this.updateStoredUnit(candidate);
-      return candidate;
-    }
-    return this.fileFallbackForSymbol(unit, snapshot, observedAt);
+    const parsed = await sources.parsed(unit.path);
+    if (unit.kind === "region") return this.currentRegion(unit, snapshot, observedAt, parsed);
+    const symbol = parsed.units.find((candidate) => candidate.selector === unit.selector);
+    return symbol
+      ? this.updateStoredUnit(resolvedSymbol({ sourcePath: unit.path, observedAt, snapshot, symbol }))
+      : this.fileFallbackForSymbol(unit, snapshot, observedAt);
+  }
+
+  async hydrate(record) {
+    const response = structuredClone(record.response);
+    const bytes = await this.store.getBlob(response.projection_sha256);
+    if (!bytes) fail("missing_blob", "archived projection is unavailable");
+    response.projection_utf8_base64 = bytes.toString("base64");
+    return response;
   }
 
   async prepare(request) {
     const granularity = normalizeGranularity(request.granularity);
-    const fingerprint = planFingerprint(request);
-    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
-    const known = recordValue(this.store.state.pendingPlans, request.requestId)
-      ?? recordValue(this.store.state.committedPlans, request.requestId);
+    const fingerprint = JSON.stringify({
+      resultIds: [...request.resultIds].sort(),
+      budgetBytes: request.budgetBytes,
+      granularity,
+    });
+    const { observations, units, pendingPlans, committedPlans } = this.store.state;
+    if (dropExpiredPending(pendingPlans)) await this.store.save();
+    const known = pendingPlans[request.requestId] ?? committedPlans[request.requestId];
     if (known) {
       if (known.fingerprint !== fingerprint) fail("idempotency_conflict", "request_id was already prepared with different inputs");
-      return StoredPlan.hydrate(this.store, known);
+      return this.hydrate(known);
     }
-    const refresh = new PrepareSourceCache();
 
-    const requested = request.resultIds
-      .map((resultId) => recordValue(this.store.state.observations, resultId))
-      .filter(Boolean);
-    const active = requested.filter((observation) => !observation.unavailable);
-    const unknown = request.resultIds
-      .filter((resultId) => !recordValue(this.store.state.observations, resultId))
-      .map((resultId) => ({ result_id: resultId, reason: "unknown_result" }));
-    const unavailable = requested
-      .filter((observation) => observation.unavailable)
-      .map((observation) => ({
-        result_id: observation.resultId,
-        path: observation.path,
-        reason: observation.unavailable.reason,
-      }));
-    const candidates = [];
-    const unresolved = [...unknown, ...unavailable];
+    const requested = [];
+    const unresolvedResults = [];
+    for (const resultId of request.resultIds) {
+      const observation = observations[resultId];
+      if (observation) requested.push(observation);
+      else unresolvedResults.push({ result_id: resultId, reason: "unknown_result" });
+    }
+    const groups = new Map();
+    for (const observation of requested) {
+      if (observation.unavailable) {
+        unresolvedResults.push({ result_id: observation.resultId, path: observation.path, reason: observation.unavailable.reason });
+      } else if (groups.has(observation.unitId)) {
+        groups.get(observation.unitId).push(observation);
+      } else {
+        groups.set(observation.unitId, [observation]);
+      }
+    }
+
+    const sources = new SourceCache(this.workspace);
     const refreshed = new Map();
-    const latestByUnit = new Map();
-    for (const observation of active) {
-      const previous = latestByUnit.get(observation.unitId);
-      if (!previous || observation.observedAt > previous.observedAt
-        || (observation.observedAt === previous.observedAt && observation.resultId.localeCompare(previous.resultId) < 0)) {
-        latestByUnit.set(observation.unitId, observation);
-      }
-    }
-    for (const observation of latestByUnit.values()) {
-      const original = recordValue(this.store.state.units, observation.unitId);
-      if (!original) {
-        for (const affected of active.filter((item) => item.unitId === observation.unitId)) {
-          unresolved.push({ result_id: affected.resultId, unit_id: affected.unitId, path: affected.path, reason: "unknown_unit" });
-        }
-        continue;
-      }
-      let candidate = refreshed.get(original.id);
-      if (!candidate) {
-        candidate = await this.currentCandidate(original, observation.observedAt, refresh);
-        refreshed.set(original.id, candidate);
-      }
+    const candidates = [];
+    for (const [unitId, group] of groups) {
+      const observedAt = group.reduce((latest, observation) => Math.max(latest, observation.observedAt), 0);
+      const original = units[unitId];
+      const candidate = original ? await this.currentCandidate(original, observedAt, sources) : unresolved("unknown_unit");
+      refreshed.set(unitId, candidate);
       if (candidate.state !== "resolved") {
-        for (const affected of active.filter((item) => item.unitId === original.id)) {
-          unresolved.push({ result_id: affected.resultId, unit_id: original.id, path: original.path, reason: candidate.reason });
+        for (const observation of group) {
+          unresolvedResults.push({ result_id: observation.resultId, unit_id: unitId, path: observation.path, reason: candidate.reason });
         }
-        continue;
+      } else if (granularity === "file" && candidate.kind !== "file") {
+        const snapshot = await sources.snapshot(candidate.path);
+        candidates.push({ ...resolvedFile({ sourcePath: candidate.path, observedAt, snapshot }), id: candidate.id });
+      } else {
+        candidates.push(candidate);
       }
-      if (granularity === SELECTION_GRANULARITY_FILE && candidate.kind !== "file") {
-        const filePath = candidate.path ?? original.path;
-        const snapshot = await PrepareSourceCache.snapshot(refresh, this.workspace, filePath);
-        candidate = {
-          ...resolvedFile({ sourcePath: filePath, observedAt: observation.observedAt, snapshot, resolution: "file" }),
-          id: candidate.id ?? original.id,
-        };
-      }
-      candidates.push(candidate);
     }
+
     const projection = buildProjection(candidates, request.budgetBytes);
-    const counterfactual = granularity === SELECTION_GRANULARITY_REGION
-      ? await this.wholeFileCounterfactual(refresh, projection.selected)
-      : null;
     const selectedIds = new Set(projection.selected.map((unit) => unit.id));
     const omittedReasons = new Map(projection.omitted.map((item) => [item.unitId, item.reason]));
-    const unitStates = new Map(
-      projection.selected.map((unit) => [
-        unit.id,
-        {
-          status: unit.kind === "region" ? (unit.relocation ?? "stable") : unit.resolution === "file-fallback" ? "updated" : "stable",
-          previousRange: unit.previousRange ?? null,
-          currentRange: { startByte: unit.startByte, endByte: unit.endByte },
-        },
-      ]),
-    );
-    const replacements = requested.map((observation) => {
-      if (observation.unavailable) {
-        const unit = {
-          id: observation.unavailable.legacyUnitId,
-          path: observation.path,
-        };
-        return {
-          result_id: observation.resultId,
-          expected_sha256: observation.observedRevision,
-          marker: unavailableMarker(unit, observation.unavailable.reason),
-        };
-      }
-      const unit = recordValue(this.store.state.units, observation.unitId) ?? { id: observation.unitId, path: observation.path };
-      const candidate = refreshed.get(observation.unitId);
-      const supplied = candidate?.state === "resolved" && selectedIds.has(candidate.id);
-      const reason = candidate?.reason ?? omittedReasons.get(candidate?.id) ?? "unresolved";
-      return {
-        result_id: observation.resultId,
-        expected_sha256: observation.observedRevision,
-        marker: supplied ? stableMarker(unit) : unavailableMarker(unit, reason),
-      };
+    const replacements = requested.map(({ resultId, unitId, observedRevision, unavailable }) => {
+      let marker;
+      if (unavailable) marker = unavailableMarker(unavailable.legacyUnitId, unavailable.reason);
+      else if (selectedIds.has(unitId)) marker = stableMarker(unitId);
+      else marker = unavailableMarker(unitId, refreshed.get(unitId).reason ?? omittedReasons.get(unitId) ?? "unresolved");
+      return { result_id: resultId, expected_sha256: observedRevision, marker };
     });
-    const planId = stableId("fp", {
-      sessionId: this.sessionId,
-      requestId: request.requestId,
-      fingerprint,
-      projection: projection.text,
-    });
-    const references = [...new Map(projection.selected.map((unit) => [unit.path, {
-      path: unit.path,
-      sourceRevision: unit.sourceRevision,
-    }])).values()];
     const projectionBytes = Buffer.from(projection.text, "utf8");
-    await this.store.putBlob(projectionBytes);
     const response = {
-      plan_id: planId,
+      plan_id: stableId("fp", {
+        sessionId: this.sessionId,
+        requestId: request.requestId,
+        fingerprint,
+        projection: projection.text,
+      }),
       replacements,
       projection_utf8_base64: projectionBytes.toString("base64"),
-      projection_sha256: revisionFor(projection.text),
-      selected: projection.selected.map((unit) => unit.id),
+      projection_sha256: await this.store.putBlob(projectionBytes),
+      selected: [...selectedIds],
       omitted: projection.omitted,
-      unresolved,
-      unit_states: Object.fromEntries(unitStates),
+      unresolved: unresolvedResults,
+      unit_states: Object.fromEntries(projection.selected.map((unit) => [unit.id, unitState(unit)])),
       selection_granularity: granularity,
-      ...(counterfactual ? { whole_file_equivalent: counterfactual } : {}),
+      ...(granularity === "region" ? { whole_file_equivalent: await wholeFileEquivalent(sources, projection.selected) } : {}),
     };
-    setRecordValue(this.store.state.pendingPlans, request.requestId, {
-      planId,
+    pendingPlans[request.requestId] = {
+      planId: response.plan_id,
       fingerprint,
-      response: StoredPlan.compact(response),
-      references,
+      response: compactResponse(response),
+      references: [...new Map(projection.selected.map((unit) => [unit.path, {
+        path: unit.path,
+        sourceRevision: unit.sourceRevision,
+      }])).values()],
       preparedAt: Date.now(),
-    });
-    StoredPlan.boundPending(this.store.state);
+    };
+    boundPending(pendingPlans);
     await this.store.save();
-    return clone(response);
-  }
-
-  async wholeFileCounterfactual(cache, selected) {
-    const seen = new Map();
-    for (const unit of selected) {
-      if (seen.has(unit.path)) continue;
-      const snapshot = await PrepareSourceCache.snapshot(cache, this.workspace, unit.path);
-      seen.set(unit.path, snapshot.bytes.length);
-    }
-    const files = [...seen.entries()]
-      .map(([filePath, bytes]) => ({ path: filePath, bytes }))
-      .sort((left, right) => left.path.localeCompare(right.path));
-    const wholeFileBytes = files.reduce((total, file) => total + file.bytes, 0);
-    return { files, whole_file_bytes: wholeFileBytes };
+    return response;
   }
 
   async commit(request) {
-    const committed = Object.values(this.store.state.committedPlans)
-      .find((plan) => plan.planId === request.planId);
-    if (committed) return { plan_id: request.planId, applied: true, idempotent: true };
-    const pendingEntry = Object.entries(this.store.state.pendingPlans)
-      .find(([, plan]) => plan.planId === request.planId);
+    const { pendingPlans, committedPlans } = this.store.state;
+    if (Object.values(committedPlans).some((plan) => plan.planId === request.planId)) {
+      return { plan_id: request.planId, applied: true, idempotent: true };
+    }
+    const pendingEntry = Object.entries(pendingPlans).find(([, plan]) => plan.planId === request.planId);
     if (!pendingEntry) fail("unknown_plan", "plan_id is not pending for this session");
     const [requestId, pending] = pendingEntry;
     for (const reference of pending.references) {
+      let stale = null;
       try {
         const current = await readStableText(this.workspace, reference.path);
         if (revisionFor(current.bytes) !== reference.sourceRevision) {
-          deleteRecordValue(this.store.state.pendingPlans, requestId);
-          await this.store.save();
-          fail("stale_plan", "a selected source file changed before commit", { path: reference.path });
+          stale = ["a selected source file changed before commit", { path: reference.path }];
         }
       } catch (error) {
-        if (error instanceof FreshCtxError && error.code === "stale_plan") throw error;
-        deleteRecordValue(this.store.state.pendingPlans, requestId);
+        stale = ["a selected source file cannot be revalidated", { path: reference.path, reason: reasonFor(error) }];
+      }
+      if (stale) {
+        delete pendingPlans[requestId];
         await this.store.save();
-        fail("stale_plan", "a selected source file cannot be revalidated", { path: reference.path, reason: reasonFor(error) });
+        fail("stale_plan", ...stale);
       }
     }
-    deleteRecordValue(this.store.state.pendingPlans, requestId);
-    setRecordValue(this.store.state.committedPlans, requestId, {
+    delete pendingPlans[requestId];
+    committedPlans[requestId] = {
       planId: request.planId,
       fingerprint: pending.fingerprint,
       response: pending.response,
       committedAt: ++this.store.state.sequence,
-    });
+    };
     await this.store.save();
     return { plan_id: request.planId, applied: true, idempotent: false };
   }
 
   async recover(request) {
-    const alias = recordValue(this.store.state.aliases, request.unitId);
-    const unit = recordValue(this.store.state.units, alias?.unitId ?? request.unitId);
+    const { aliases, units } = this.store.state;
+    const unit = units[aliases[request.unitId]?.unitId ?? request.unitId];
     if (!unit) fail("unknown_unit", "unit_id is not known in this session");
     if (!unit.revisions?.includes(request.revision)) {
       fail("unknown_revision", "revision is not archived for this unit");
@@ -741,19 +508,19 @@ export class FreshCtxSession {
   }
 
   async status() {
-    if (StoredPlan.dropExpiredPending(this.store.state)) await this.store.save();
-    const state = this.store.state;
+    const { observations, units, pendingPlans, committedPlans } = this.store.state;
+    if (dropExpiredPending(pendingPlans)) await this.store.save();
     return {
       healthy: true,
-      protocol: "freshctx/1",
+      protocol: PROTOCOL,
       version: VERSION,
       session_id: this.sessionId,
       languages: supportedLanguages,
       counts: {
-        observations: Object.keys(state.observations).length,
-        units: Object.keys(state.units).length,
-        pending_plans: Object.keys(state.pendingPlans).length,
-        committed_plans: Object.keys(state.committedPlans).length,
+        observations: Object.keys(observations).length,
+        units: Object.keys(units).length,
+        pending_plans: Object.keys(pendingPlans).length,
+        committed_plans: Object.keys(committedPlans).length,
       },
     };
   }

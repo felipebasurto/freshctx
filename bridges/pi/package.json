@@ -40,7 +40,7 @@
     "@earendil-works/pi-server": "0.85.0"
   },
   "scripts": {
-    "check": "node --check extension.js && node --check src/bridge.mjs && node --check src/client.mjs && node --check demo.mjs",
+    "check": "node --check extension.js && node --check src/bridge.mjs && node --check demo.mjs",
     "test": "node --test test/*.test.mjs",
     "demo": "node demo.mjs",
     "demo:resume": "node demo.mjs --resume"

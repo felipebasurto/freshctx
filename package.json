@@ -46,6 +46,7 @@
   },
   "private": true,
   "exports": {
+    "./client": "./src/client.mjs",
     "./hash": "./src/hash.mjs",
     "./workspace": "./src/workspace.mjs"
   }

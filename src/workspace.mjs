@@ -85,8 +85,7 @@ export async function openWorkspace(root) {
     fail("invalid_workspace", "workspace root is required");
   }
   const resolvedRoot = await realpath(root);
-  const rootEntry = await lstat(resolvedRoot);
-  if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+  if (!(await lstat(resolvedRoot)).isDirectory()) {
     fail("invalid_workspace", "workspace root must be a real directory");
   }
   return Object.freeze({ root: resolvedRoot });
@@ -114,13 +113,11 @@ export async function readStableText(workspace, clientPath, { maxBytes = DEFAULT
       if (bytes.length > maxBytes) fail("file_too_large", "source file exceeds the configured limit");
       const after = await stat(resolved);
       const afterCandidate = await assertNoSymlinkSegments(workspace.root, relativePath);
-      const afterResolved = await realpath(afterCandidate);
-      const pathChanged = afterResolved !== resolved || !pathIsInside(workspace.root, afterResolved);
-      if (!sameStat(before, after) || !sameStat(opened, after) || pathChanged) {
+      if (!sameStat(before, after) || !sameStat(opened, after) || await realpath(afterCandidate) !== resolved) {
         if (attempt === 0) continue;
         fail("snapshot_unstable", "source file changed while FreshCtx was reading it");
       }
-      return { path: relativePath, text: decodeUtf8(bytes), bytes, stat: after };
+      return { path: relativePath, text: decodeUtf8(bytes), bytes };
     } catch (error) {
       if (error?.code === "ENOENT") fail("deleted", "source file no longer exists");
       throw error;
@@ -146,8 +143,7 @@ async function gitDirectory(workspaceRoot) {
     if (!match) return null;
     const target = path.resolve(workspaceRoot, match[1]);
     if (!pathIsInside(workspaceRoot, target)) return null;
-    const targetEntry = await lstat(target);
-    if (!targetEntry.isDirectory() || targetEntry.isSymbolicLink()) return null;
+    if (!(await lstat(target)).isDirectory()) return null;
     const resolved = await realpath(target);
     return pathIsInside(workspaceRoot, resolved) ? resolved : null;
   } catch (error) {
@@ -161,8 +157,7 @@ export async function addWorkspaceExclude(workspace) {
   if (!gitDir) return false;
   const infoDir = path.join(gitDir, "info");
   try {
-    const entry = await lstat(infoDir);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) return false;
+    if (!(await lstat(infoDir)).isDirectory()) return false;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     await mkdir(infoDir, { recursive: true, mode: 0o700 });
@@ -172,8 +167,7 @@ export async function addWorkspaceExclude(workspace) {
   const excludePath = path.join(infoDir, "exclude");
   let existing = "";
   try {
-    const entry = await lstat(excludePath);
-    if (!entry.isFile() || entry.isSymbolicLink()) return false;
+    if (!(await lstat(excludePath)).isFile()) return false;
     existing = await readFile(excludePath, "utf8");
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
