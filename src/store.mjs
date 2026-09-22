@@ -10,52 +10,41 @@ import {
   randomId,
   regionUnitIdentity,
   sha256,
-  stableId,
   symbolUnitIdentity,
 } from "./hash.mjs";
 
 const STATE_DIRECTORY = ".freshctx";
+const STATE_CHILDREN = ["blobs", "blobs/sha256", "sessions", "locks"];
 const CONFIG_SCHEMA_VERSION = 1;
 const SESSION_SCHEMA_VERSION = 2;
 const STATE_PRODUCT = "freshctx";
 const LIFECYCLE_LOCK = "lifecycle.lock";
 const LIFECYCLE_RECOVERY_PREFIX = `${LIFECYCLE_LOCK}.recovering.`;
+const UNSAFE_DIRECTORY = "FreshCtx state path must be a real directory";
 
 function statePath(workspace) {
   return path.join(workspace.root, STATE_DIRECTORY);
 }
 
-async function ensureRealDirectory(target) {
+async function entryAt(target) {
   try {
-    const entry = await lstat(target);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      fail("state_unsafe", "FreshCtx state path must be a real directory");
-    }
+    return await lstat(target);
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-    await mkdir(target, { recursive: true, mode: 0o700 });
-  }
-}
-
-async function requireRealDirectory(target, message = "FreshCtx state path must be a real directory") {
-  try {
-    const entry = await lstat(target);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) fail("state_unsafe", message);
-  } catch (error) {
-    if (error?.code === "ENOENT") fail("state_corrupt", "FreshCtx state is incomplete");
+    if (error?.code === "ENOENT") return null;
     throw error;
   }
 }
 
-async function createStateDirectory(target) {
-  try {
-    await mkdir(target, { mode: 0o700 });
-    return true;
-  } catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    await requireRealDirectory(target);
-    return false;
-  }
+async function ensureRealDirectory(target) {
+  const entry = await entryAt(target);
+  if (!entry) await mkdir(target, { recursive: true, mode: 0o700 });
+  else if (!entry.isDirectory()) fail("state_unsafe", UNSAFE_DIRECTORY);
+}
+
+async function requireRealDirectory(target) {
+  const entry = await entryAt(target);
+  if (!entry) fail("state_corrupt", "FreshCtx state is incomplete");
+  if (!entry.isDirectory()) fail("state_unsafe", UNSAFE_DIRECTORY);
 }
 
 async function writeAtomic(target, value) {
@@ -76,11 +65,10 @@ async function writeAtomic(target, value) {
 }
 
 async function readJson(target) {
+  const entry = await entryAt(target);
+  if (!entry) return null;
+  if (!entry.isFile()) fail("state_unsafe", "FreshCtx state file must be a regular file");
   try {
-    const entry = await lstat(target);
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      fail("state_unsafe", "FreshCtx state file must be a regular file");
-    }
     return JSON.parse(await readFile(target, "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
@@ -97,16 +85,7 @@ function isRecord(value) {
 
 function normalizeRecord(value, field) {
   if (!isRecord(value)) fail("state_corrupt", `FreshCtx ${field} must be an object record`);
-  const normalized = Object.create(null);
-  for (const [key, entry] of Object.entries(value)) {
-    Object.defineProperty(normalized, key, {
-      value: entry,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  }
-  return normalized;
+  return Object.assign(Object.create(null), value);
 }
 
 function validateConfig(config) {
@@ -121,8 +100,8 @@ function validateConfig(config) {
   }
 }
 
-function processIsAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+function lockMayBeActive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
   try {
     process.kill(pid, 0);
     return true;
@@ -131,33 +110,9 @@ function processIsAlive(pid) {
   }
 }
 
-function lockMayBeActive(pid) {
-  return !Number.isSafeInteger(pid) || pid <= 0 || processIsAlive(pid);
-}
-
-async function hasActiveLocks(lockDirectory) {
-  const directory = await lstat(lockDirectory);
-  if (!directory.isDirectory() || directory.isSymbolicLink()) {
-    fail("state_unsafe", "FreshCtx lock directory is unsafe");
-  }
-  for (const name of await readdir(lockDirectory)) {
-    if (name === LIFECYCLE_LOCK) continue;
-    const lockPath = path.join(lockDirectory, name);
-    const entry = await lstat(lockPath);
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      fail("state_unsafe", "FreshCtx lock path is unsafe");
-    }
-    const pid = Number((await readFile(lockPath, "utf8")).trim());
-    if (lockMayBeActive(pid)) return true;
-  }
-  return false;
-}
-
 async function readLockPid(lockPath) {
   const entry = await lstat(lockPath);
-  if (!entry.isFile() || entry.isSymbolicLink()) {
-    fail("state_unsafe", "FreshCtx lock path is unsafe");
-  }
+  if (!entry.isFile()) fail("state_unsafe", "FreshCtx lock path is unsafe");
   return Number((await readFile(lockPath, "utf8")).trim());
 }
 
@@ -182,86 +137,40 @@ async function createLock(lockPath) {
   }
 }
 
-async function recoveryLocks(lockDirectory) {
-  return (await readdir(lockDirectory))
-    .filter((name) => name.startsWith(LIFECYCLE_RECOVERY_PREFIX))
-    .map((name) => path.join(lockDirectory, name));
-}
-
-async function clearDeadLifecycleRecoveries(lockDirectory) {
-  for (const recoveryPath of await recoveryLocks(lockDirectory)) {
-    const pid = await readLockPid(recoveryPath);
-    if (lockMayBeActive(pid)) fail("state_busy", "FreshCtx state maintenance is already active");
+async function acquireLock(lockPath, code, subject, clearRecoveries = async () => false) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (await clearRecoveries()) continue;
+    try {
+      return await createLock(lockPath);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    if (lockMayBeActive(await readLockPid(lockPath))) fail(code, `${subject} is already active`);
+    const recoveryPath = `${lockPath}.recovering.${randomId("lock")}`;
+    try {
+      await rename(lockPath, recoveryPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (lockMayBeActive(await readLockPid(recoveryPath))) fail(code, `${subject} is already active`);
     await rm(recoveryPath, { force: false });
   }
+  fail(code, `${subject} could not be acquired`);
 }
 
-async function acquireLifecycleLock(root, { recoverStale = false } = {}) {
+function acquireLifecycleLock(root) {
   const lockDirectory = path.join(root, "locks");
-  const lockPath = path.join(root, "locks", LIFECYCLE_LOCK);
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const recoveries = await recoveryLocks(lockDirectory);
-    if (recoveries.length > 0) {
-      if (!recoverStale) fail("state_busy", "FreshCtx state maintenance is already active");
-      await clearDeadLifecycleRecoveries(lockDirectory);
-      continue;
-    }
-    try {
-      return await createLock(lockPath);
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      if (!recoverStale) {
-        await readLockPid(lockPath);
-        fail("state_busy", "FreshCtx state maintenance is already active");
-      }
-      const pid = await readLockPid(lockPath);
-      if (lockMayBeActive(pid)) fail("state_busy", "FreshCtx state maintenance is already active");
-      const recoveryPath = `${lockPath}.recovering.${randomId("lock")}`;
-      try {
-        await rename(lockPath, recoveryPath);
-      } catch (renameError) {
-        if (renameError?.code === "ENOENT") continue;
-        throw renameError;
-      }
-      const movedPid = await readLockPid(recoveryPath);
-      if (lockMayBeActive(movedPid)) fail("state_busy", "FreshCtx state maintenance is already active");
+  const subject = "FreshCtx state maintenance";
+  return acquireLock(path.join(lockDirectory, LIFECYCLE_LOCK), "state_busy", subject, async () => {
+    const recoveries = (await readdir(lockDirectory)).filter((name) => name.startsWith(LIFECYCLE_RECOVERY_PREFIX));
+    for (const name of recoveries) {
+      const recoveryPath = path.join(lockDirectory, name);
+      if (lockMayBeActive(await readLockPid(recoveryPath))) fail("state_busy", `${subject} is already active`);
       await rm(recoveryPath, { force: false });
     }
-  }
-  fail("state_busy", "FreshCtx state maintenance could not be acquired");
-}
-
-async function acquireSessionLock(lockPath) {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      return await createLock(lockPath);
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      const pid = await readLockPid(lockPath);
-      if (lockMayBeActive(pid)) fail("session_locked", "this FreshCtx session is already active");
-      const recoveryPath = `${lockPath}.recovering.${randomId("lock")}`;
-      try {
-        await rename(lockPath, recoveryPath);
-      } catch (renameError) {
-        if (renameError?.code === "ENOENT") continue;
-        throw renameError;
-      }
-      const movedPid = await readLockPid(recoveryPath);
-      if (lockMayBeActive(movedPid)) fail("session_locked", "this FreshCtx session is already active");
-      await rm(recoveryPath, { force: false });
-    }
-  }
-  fail("session_locked", "this FreshCtx session could not be acquired");
-}
-
-async function removeInactiveSessionLocks(lockDirectory) {
-  for (const name of await readdir(lockDirectory)) {
-    if (name === LIFECYCLE_LOCK) continue;
-    const lockPath = path.join(lockDirectory, name);
-    const pid = await readLockPid(lockPath);
-    if (lockMayBeActive(pid)) fail("state_active", "refusing to clean while a FreshCtx session is active");
-    await rm(lockPath, { force: false });
-  }
+    return recoveries.length > 0;
+  });
 }
 
 function validateSessionHeader(state, sessionId, version) {
@@ -276,10 +185,6 @@ function validateSessionHeader(state, sessionId, version) {
   state.units = normalizeRecord(state.units, "session units");
   state.pendingPlans = normalizeRecord(state.pendingPlans, "session pending plans");
   state.committedPlans = normalizeRecord(state.committedPlans, "session committed plans");
-}
-
-function validateSessionV1(state, sessionId) {
-  validateSessionHeader(state, sessionId, 1);
 }
 
 function validateSessionV2(state, sessionId) {
@@ -315,17 +220,6 @@ function validateSessionV2(state, sessionId) {
   }
 }
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function fingerprintedRegion(unit) {
-  return unit.kind === "region"
-    && typeof unit.path === "string"
-    && typeof unit.prefixAnchor === "string"
-    && typeof unit.suffixAnchor === "string";
-}
-
 function identityVerdict(oldId, unit, observations) {
   if (!isRecord(unit)) fail("state_corrupt", "FreshCtx session unit is invalid");
   if (observations.some((observation) => observation.path !== unit.path)) {
@@ -334,55 +228,48 @@ function identityVerdict(oldId, unit, observations) {
   if (unit.kind !== "file" && observations.some((observation) => observation.range === null)) {
     return { unavailable: "identity_collision" };
   }
-  if (unit.kind === "file" && typeof unit.path === "string") {
-    const identity = fileUnitIdentity(unit.path);
-    return legacyCompactUnitId(identity) === oldId
-      ? { identity, alias: true }
-      : { unavailable: "identity_collision" };
+  const named = typeof unit.path !== "string" ? null
+    : unit.kind === "file" ? fileUnitIdentity(unit.path)
+      : unit.kind === "symbol" && typeof unit.selector === "string" ? symbolUnitIdentity(unit.path, unit.selector)
+        : null;
+  if (named) {
+    return legacyCompactUnitId(named) === oldId ? { identity: named, alias: true } : { unavailable: "identity_collision" };
   }
-  if (unit.kind === "symbol" && typeof unit.path === "string" && typeof unit.selector === "string") {
-    const identity = symbolUnitIdentity(unit.path, unit.selector);
-    return legacyCompactUnitId(identity) === oldId
-      ? { identity, alias: true }
-      : { unavailable: "identity_collision" };
+  if (unit.kind !== "region") return { unavailable: "identity_collision" };
+  if (typeof unit.path !== "string" || typeof unit.prefixAnchor !== "string" || typeof unit.suffixAnchor !== "string") {
+    return { unavailable: "legacy_region" };
   }
-  if (!fingerprintedRegion(unit)) {
-    return { unavailable: unit.kind === "region" ? "legacy_region" : "identity_collision" };
-  }
-  const revisions = [...new Set([
+  const regionIdentity = (revision, parent) =>
+    regionUnitIdentity(unit.path, revision, unit.prefixAnchor, unit.suffixAnchor, parent);
+  const revisions = new Set([
     unit.referentRevision,
     unit.revision,
     ...(Array.isArray(unit.revisions) ? unit.revisions : []),
-  ].filter((revision) => typeof revision === "string"))];
-  const parents = [...new Set([unit.parentSelector ?? null, null])];
+  ].filter((revision) => typeof revision === "string"));
   const matches = new Map();
   for (const revision of revisions) {
-    for (const parent of parents) {
-      const identity = regionUnitIdentity(
-        unit.path,
-        revision,
-        unit.prefixAnchor,
-        unit.suffixAnchor,
-        parent,
-      );
-      if (legacyCompactUnitId(identity) === oldId) {
-        matches.set(compactUnitId(identity), identity);
-      }
+    for (const parent of new Set([unit.parentSelector ?? null, null])) {
+      const identity = regionIdentity(revision, parent);
+      if (legacyCompactUnitId(identity) === oldId) matches.set(compactUnitId(identity), identity);
     }
   }
   if (matches.size > 1) return { unavailable: "identity_collision" };
   if (matches.size === 1) return { identity: [...matches.values()][0], alias: true };
   const revision = unit.referentRevision ?? unit.revision;
   if (typeof revision !== "string") return { unavailable: "legacy_region" };
+  return { identity: regionIdentity(revision, unit.parentSelector ?? null), alias: false };
+}
+
+function blankSession(sessionId, sequence = 0) {
   return {
-    identity: regionUnitIdentity(
-      unit.path,
-      revision,
-      unit.prefixAnchor,
-      unit.suffixAnchor,
-      unit.parentSelector ?? null,
-    ),
-    alias: false,
+    version: SESSION_SCHEMA_VERSION,
+    sessionId,
+    observations: Object.create(null),
+    units: Object.create(null),
+    aliases: Object.create(null),
+    pendingPlans: Object.create(null),
+    committedPlans: Object.create(null),
+    sequence,
   };
 }
 
@@ -396,8 +283,7 @@ function migrateSessionV1(state) {
     bound.push(observation);
     observationsByUnit.set(observation.unitId, bound);
   }
-  const units = Object.create(null);
-  const aliases = Object.create(null);
+  const migrated = blankSession(state.sessionId, state.sequence);
   const outcomes = new Map();
   for (const [oldId, unit] of Object.entries(state.units)) {
     const verdict = identityVerdict(oldId, unit, observationsByUnit.get(oldId) ?? []);
@@ -406,107 +292,55 @@ function migrateSessionV1(state) {
       continue;
     }
     const unitId = compactUnitId(verdict.identity);
-    const migrated = clone(unit);
-    migrated.id = unitId;
-    migrated.identity = verdict.identity;
-    Object.defineProperty(units, unitId, {
-      value: migrated,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    if (verdict.alias) {
-      Object.defineProperty(aliases, oldId, {
-        value: { unitId },
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    }
+    migrated.units[unitId] = { ...structuredClone(unit), id: unitId, identity: verdict.identity };
+    if (verdict.alias) migrated.aliases[oldId] = { unitId };
     outcomes.set(oldId, { unitId });
   }
-  const observations = Object.create(null);
   for (const [resultId, observation] of Object.entries(state.observations)) {
-    const migrated = clone(observation);
     const outcome = outcomes.get(observation.unitId) ?? { unavailable: "identity_collision" };
-    if (outcome.unavailable) {
-      migrated.unitId = null;
-      migrated.unavailable = {
-        reason: outcome.unavailable,
-        legacyUnitId: observation.unitId,
-      };
-    } else {
-      migrated.unitId = outcome.unitId;
-    }
-    Object.defineProperty(observations, resultId, {
-      value: migrated,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+    migrated.observations[resultId] = outcome.unavailable
+      ? {
+        ...structuredClone(observation),
+        unitId: null,
+        unavailable: { reason: outcome.unavailable, legacyUnitId: observation.unitId },
+      }
+      : { ...structuredClone(observation), unitId: outcome.unitId };
   }
-  return {
-    version: SESSION_SCHEMA_VERSION,
-    sessionId: state.sessionId,
-    observations,
-    units,
-    aliases,
-    pendingPlans: Object.create(null),
-    committedPlans: Object.create(null),
-    sequence: state.sequence,
-  };
-}
-
-function blankSession(sessionId) {
-  return {
-    version: SESSION_SCHEMA_VERSION,
-    sessionId,
-    observations: Object.create(null),
-    units: Object.create(null),
-    aliases: Object.create(null),
-    pendingPlans: Object.create(null),
-    committedPlans: Object.create(null),
-    sequence: 0,
-  };
+  return migrated;
 }
 
 export async function initializeStore(workspace) {
   const root = statePath(workspace);
-  const created = await createStateDirectory(root);
   const configPath = path.join(root, "config.json");
+  let created = true;
+  try {
+    await mkdir(root, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    await requireRealDirectory(root);
+    created = false;
+  }
   if (created) {
     await writeAtomic(configPath, `${JSON.stringify({ product: STATE_PRODUCT, version: CONFIG_SCHEMA_VERSION, maxSourceBytes: 524288 })}\n`);
   } else {
     const current = await readJson(configPath);
-    if (current === null) {
-      fail("state_unsafe", "refusing to adopt an unowned FreshCtx state directory");
-    }
+    if (current === null) fail("state_unsafe", "refusing to adopt an unowned FreshCtx state directory");
     validateConfig(current);
   }
-  for (const child of ["blobs", "blobs/sha256", "sessions", "locks"]) {
-    await ensureRealDirectory(path.join(root, child));
-  }
+  for (const child of STATE_CHILDREN) await ensureRealDirectory(path.join(root, child));
   return { root };
 }
 
 async function openExistingStore(workspace) {
-  const target = statePath(workspace);
-  try {
-    const entry = await lstat(target);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      fail("state_unsafe", "FreshCtx state path must be a real directory");
-    }
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  const config = await readJson(path.join(target, "config.json"));
+  const root = statePath(workspace);
+  const entry = await entryAt(root);
+  if (!entry) return null;
+  if (!entry.isDirectory()) fail("state_unsafe", UNSAFE_DIRECTORY);
+  const config = await readJson(path.join(root, "config.json"));
   if (config === null) fail("state_unsafe", "FreshCtx state does not have an owned configuration");
   validateConfig(config);
-  for (const child of ["blobs", "blobs/sha256", "sessions", "locks"]) {
-    await requireRealDirectory(path.join(target, child));
-  }
-  return { root: target };
+  for (const child of STATE_CHILDREN) await requireRealDirectory(path.join(root, child));
+  return { root };
 }
 
 async function resetDirectory(target) {
@@ -517,13 +351,19 @@ async function resetDirectory(target) {
 export async function cleanStore(workspace) {
   const existing = await openExistingStore(workspace);
   if (!existing) return false;
-  const lifecycle = await acquireLifecycleLock(existing.root, { recoverStale: true });
+  const lifecycle = await acquireLifecycleLock(existing.root);
   try {
     const lockDirectory = path.join(existing.root, "locks");
-    if (await hasActiveLocks(lockDirectory)) {
+    const sessionLocks = [];
+    for (const name of await readdir(lockDirectory)) {
+      if (name === LIFECYCLE_LOCK) continue;
+      const lockPath = path.join(lockDirectory, name);
+      sessionLocks.push({ lockPath, pid: await readLockPid(lockPath) });
+    }
+    if (sessionLocks.some((lock) => lockMayBeActive(lock.pid))) {
       fail("state_active", "refusing to clean while a FreshCtx session is active");
     }
-    await removeInactiveSessionLocks(lockDirectory);
+    for (const { lockPath } of sessionLocks) await rm(lockPath, { force: false });
     await resetDirectory(path.join(existing.root, "blobs"));
     await ensureRealDirectory(path.join(existing.root, "blobs", "sha256"));
     await resetDirectory(path.join(existing.root, "sessions"));
@@ -537,20 +377,20 @@ export async function openSessionStore(workspace, sessionId) {
   if (typeof sessionId !== "string" || sessionId.length === 0) {
     fail("invalid_session", "session id is required");
   }
-  const initialized = await initializeStore(workspace);
-  const sessionKey = stableId("session", { sessionId }).slice("session_".length);
-  const sessionPath = path.join(initialized.root, "sessions", `${sessionKey}.json`);
-  const lockPath = path.join(initialized.root, "locks", `${sessionKey}.lock`);
-  const lifecycle = await acquireLifecycleLock(initialized.root, { recoverStale: true });
+  const { root } = await initializeStore(workspace);
+  const sessionKey = compactUnitId({ sessionId });
+  const sessionPath = path.join(root, "sessions", `${sessionKey}.json`);
+  const blobPath = (digest) => path.join(root, "blobs", "sha256", digest);
+  const lifecycle = await acquireLifecycleLock(root);
   let lock;
   let state;
   try {
-    lock = await acquireSessionLock(lockPath);
+    lock = await acquireLock(path.join(root, "locks", `${sessionKey}.lock`), "session_locked", "this FreshCtx session");
     const stored = await readJson(sessionPath);
     if (stored === null) {
       state = blankSession(sessionId);
     } else if (stored.version === 1) {
-      validateSessionV1(stored, sessionId);
+      validateSessionHeader(stored, sessionId, 1);
       state = migrateSessionV1(stored);
       validateSessionV2(state, sessionId);
       await writeAtomic(sessionPath, `${JSON.stringify(state)}\n`);
@@ -568,43 +408,36 @@ export async function openSessionStore(workspace, sessionId) {
   }
 
   let closed = false;
-  async function save() {
+  function assertOpen() {
     if (closed) fail("session_closed", "FreshCtx session is closed");
+  }
+  async function save() {
+    assertOpen();
     await writeAtomic(sessionPath, `${JSON.stringify(state)}\n`);
   }
   async function putBlob(bytes) {
-    if (closed) fail("session_closed", "FreshCtx session is closed");
+    assertOpen();
     const digest = sha256(bytes);
-    const target = path.join(initialized.root, "blobs", "sha256", digest);
-    try {
-      const entry = await lstat(target);
-      if (!entry.isFile() || entry.isSymbolicLink()) fail("state_unsafe", "FreshCtx blob path is unsafe");
-      const existing = await readFile(target);
-      if (sha256(existing) !== digest) fail("blob_corrupt", "FreshCtx blob contents do not match its SHA-256 name");
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      await writeAtomic(target, bytes);
-    }
+    const target = blobPath(digest);
+    const entry = await entryAt(target);
+    if (!entry) await writeAtomic(target, bytes);
+    else if (!entry.isFile()) fail("state_unsafe", "FreshCtx blob path is unsafe");
+    else if (entry.size !== bytes.length) fail("blob_corrupt", "FreshCtx blob contents do not match its SHA-256 name");
     return `sha256:${digest}`;
   }
   async function getBlob(revision) {
-    const digest = digestFromRevision(revision);
-    const target = path.join(initialized.root, "blobs", "sha256", digest);
-    try {
-      const entry = await lstat(target);
-      if (!entry.isFile() || entry.isSymbolicLink()) fail("state_unsafe", "FreshCtx blob path is unsafe");
-      const bytes = await readFile(target);
-      if (sha256(bytes) !== digest) fail("blob_corrupt", "FreshCtx blob contents do not match its SHA-256 name");
-      return bytes;
-    } catch (error) {
-      if (error?.code === "ENOENT") return null;
-      throw error;
-    }
+    const target = blobPath(digestFromRevision(revision));
+    const entry = await entryAt(target);
+    if (!entry) return null;
+    if (!entry.isFile()) fail("state_unsafe", "FreshCtx blob path is unsafe");
+    const bytes = await readFile(target);
+    if (`sha256:${sha256(bytes)}` !== revision) fail("blob_corrupt", "FreshCtx blob contents do not match its SHA-256 name");
+    return bytes;
   }
   async function close() {
     if (closed) return;
     closed = true;
     await releaseLock(lock);
   }
-  return { state, save, putBlob, getBlob, close, root: initialized.root };
+  return { state, save, putBlob, getBlob, close, root };
 }

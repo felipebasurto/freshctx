@@ -1,19 +1,25 @@
-import process from "node:process";
-
 import { publicError } from "./errors.mjs";
 import { runServer } from "./server.mjs";
 import { cleanStore, initializeStore } from "./store.mjs";
 import { verifyTreeSitterAssets } from "./treesitter.mjs";
 import { addWorkspaceExclude, openWorkspace } from "./workspace.mjs";
 
-function usage() {
-  return [
-    "Usage:",
-    "  freshctx init [--root <workspace>]",
-    "  freshctx serve --stdio [--root <workspace>]",
-    "  freshctx clean [--root <workspace>]",
-    "  freshctx doctor",
-  ].join("\n");
+const USAGE = [
+  "Usage:",
+  "  freshctx init [--root <workspace>]",
+  "  freshctx serve --stdio [--root <workspace>]",
+  "  freshctx clean [--root <workspace>]",
+  "  freshctx doctor",
+].join("\n");
+
+function usageError(message) {
+  process.stderr.write(`${message ? `${message}\n` : ""}${USAGE}\n`);
+  return 2;
+}
+
+function report(value) {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+  return 0;
 }
 
 function parseArguments(argv) {
@@ -41,8 +47,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     parsed = parseArguments(argv);
   } catch (error) {
-    process.stderr.write(`${error.message}\n${usage()}\n`);
-    return 2;
+    return usageError(error.message);
   }
   const { command, options } = parsed;
   try {
@@ -50,31 +55,20 @@ export async function main(argv = process.argv.slice(2)) {
       case "init": {
         const workspace = await openWorkspace(options.root);
         await initializeStore(workspace);
-        const excluded = await addWorkspaceExclude(workspace);
-        process.stdout.write(`${JSON.stringify({ initialized: true, workspace: workspace.root, git_exclude_updated: excluded })}\n`);
-        return 0;
+        return report({ initialized: true, workspace: workspace.root, git_exclude_updated: await addWorkspaceExclude(workspace) });
       }
       case "clean": {
         const workspace = await openWorkspace(options.root);
-        const removed = await cleanStore(workspace);
-        process.stdout.write(`${JSON.stringify({ cleaned: removed, workspace: workspace.root })}\n`);
-        return 0;
+        return report({ cleaned: await cleanStore(workspace), workspace: workspace.root });
       }
       case "serve":
-        if (!options.stdio) {
-          process.stderr.write(`freshctx serve requires --stdio\n${usage()}\n`);
-          return 2;
-        }
+        if (!options.stdio) return usageError("freshctx serve requires --stdio");
         await runServer({ root: options.root });
         return 0;
-      case "doctor": {
-        const languages = await verifyTreeSitterAssets();
-        process.stdout.write(`${JSON.stringify({ healthy: true, languages })}\n`);
-        return 0;
-      }
+      case "doctor":
+        return report({ healthy: true, languages: await verifyTreeSitterAssets() });
       default:
-        process.stderr.write(`${usage()}\n`);
-        return 2;
+        return usageError();
     }
   } catch (error) {
     const details = publicError(error);

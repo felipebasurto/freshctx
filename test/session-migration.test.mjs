@@ -2,19 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { revisionFor } from "../src/hash.mjs";
-import { FreshCtxSession } from "../src/session.mjs";
-import { openSessionStore } from "../src/store.mjs";
-import { openWorkspace } from "../src/workspace.mjs";
-import { content, decodedProjection, workspaceFor } from "./helpers.mjs";
-
-async function opened(root, sessionId) {
-  const workspace = await openWorkspace(root);
-  const store = await openSessionStore(workspace, sessionId);
-  return {
-    store,
-    session: new FreshCtxSession({ workspace, store, sessionId }),
-  };
-}
+import { content, decodedProjection, sessionFor, workspaceFor } from "./helpers.mjs";
 
 function record(entries) {
   return Object.assign(Object.create(null), Object.fromEntries(entries));
@@ -46,8 +34,7 @@ test("new sessions keep colliding eight-character prefixes as distinct unit ids"
     [paths[0]]: "VALUE = 1\n",
     [paths[1]]: "VALUE = 2\n",
   });
-  const { store, session } = await opened(root, "collision-free");
-  t.after(() => store.close());
+  const session = await sessionFor(t, root, "collision-free");
   const first = await session.observe({ resultId: "first", path: paths[0], content: content("VALUE = 1\n"), range: null, turn: 1 });
   const second = await session.observe({ resultId: "second", path: paths[1], content: content("VALUE = 2\n"), range: null, turn: 2 });
   assert.equal(first.unit_id.slice(0, 8), "77694816");
@@ -63,34 +50,32 @@ test("new sessions keep colliding eight-character prefixes as distinct unit ids"
 test("opening v1 state migrates a provable unit and keeps its recover alias", async (t) => {
   const source = "VALUE = 1\n";
   const root = await workspaceFor(t, { "a.py": source });
-  const first = await opened(root, "migrate-file");
-  const observed = await first.session.observe({ resultId: "read", path: "a.py", content: content(source), range: null, turn: 1 });
-  const oldPlan = await first.session.prepare({ requestId: "old", resultIds: ["read"], budgetBytes: 4096 });
+  const first = await sessionFor(t, root, "migrate-file");
+  const observed = await first.observe({ resultId: "read", path: "a.py", content: content(source), range: null, turn: 1 });
+  const oldPlan = await first.prepare({ requestId: "old", resultIds: ["read"], budgetBytes: 4096 });
   await saveAsV1(first.store);
   await first.store.close();
 
-  const second = await opened(root, "migrate-file");
-  t.after(() => second.store.close());
+  const second = await sessionFor(t, root, "migrate-file");
   assert.equal(second.store.state.version, 2);
-  await assert.rejects(second.session.commit({ planId: oldPlan.plan_id }), { code: "unknown_plan" });
+  await assert.rejects(second.commit({ planId: oldPlan.plan_id }), { code: "unknown_plan" });
   const migratedId = second.store.state.observations.read.unitId;
   const legacyId = observed.unit_id.slice(0, 8);
   assert.match(migratedId, /^[a-f0-9]{24}$/u);
   assert.equal(second.store.state.aliases[legacyId].unitId, migratedId);
-  const recovered = await second.session.recover({ unitId: legacyId, revision: revisionFor(source) });
+  const recovered = await second.recover({ unitId: legacyId, revision: revisionFor(source) });
   assert.equal(Buffer.from(recovered.content_utf8_base64, "base64").toString("utf8"), source);
   const migratedState = JSON.stringify(second.store.state);
   await second.store.close();
-  const third = await opened(root, "migrate-file");
-  t.after(() => third.store.close());
+  const third = await sessionFor(t, root, "migrate-file");
   assert.equal(JSON.stringify(third.store.state), migratedState);
 });
 
 test("opening a fingerprinted v1 region preserves its identity and relocation", async (t) => {
   const before = "HEAD = 0\nVALUE = 1\nTAIL = 2\n";
   const root = await workspaceFor(t, { "region.py": before });
-  const first = await opened(root, "migrate-region");
-  const observed = await first.session.observe({
+  const first = await sessionFor(t, root, "migrate-region");
+  const observed = await first.observe({
     resultId: "read",
     path: "region.py",
     content: content("VALUE = 1"),
@@ -100,10 +85,9 @@ test("opening a fingerprinted v1 region preserves its identity and relocation", 
   await saveAsV1(first.store);
   await first.store.close();
 
-  const second = await opened(root, "migrate-region");
-  t.after(() => second.store.close());
+  const second = await sessionFor(t, root, "migrate-region");
   assert.equal(second.store.state.aliases[observed.unit_id.slice(0, 8)].unitId.length, 24);
-  const plan = await second.session.prepare({ requestId: "current", resultIds: ["read"], budgetBytes: 4096 });
+  const plan = await second.prepare({ requestId: "current", resultIds: ["read"], budgetBytes: 4096 });
   assert.match(decodedProjection(plan), /VALUE = 1/u);
 });
 
@@ -112,15 +96,15 @@ test("opening an offset-only v1 region omits it and still prepares a valid file"
     "legacy.py": "VALUE = 1\n",
     "current.py": "OTHER = 2\n",
   });
-  const first = await opened(root, "legacy-region");
-  const legacy = await first.session.observe({
+  const first = await sessionFor(t, root, "legacy-region");
+  const legacy = await first.observe({
     resultId: "legacy",
     path: "legacy.py",
     content: content("VALUE = 1"),
     range: { startByte: 0, endByte: 9 },
     turn: 1,
   });
-  await first.session.observe({
+  await first.observe({
     resultId: "current",
     path: "current.py",
     content: content("OTHER = 2\n"),
@@ -134,9 +118,8 @@ test("opening an offset-only v1 region omits it and still prepares a valid file"
   await saveAsV1(first.store);
   await first.store.close();
 
-  const second = await opened(root, "legacy-region");
-  t.after(() => second.store.close());
-  const plan = await second.session.prepare({
+  const second = await sessionFor(t, root, "legacy-region");
+  const plan = await second.prepare({
     requestId: "mixed",
     resultIds: ["legacy", "current"],
     budgetBytes: 4096,
@@ -156,10 +139,10 @@ test("opening v1 collision damage quarantines affected observations", async (t) 
     [paths[1]]: "VALUE = 2\n",
     "safe.py": "SAFE = 3\n",
   });
-  const first = await opened(root, "collision-migration");
-  const left = await first.session.observe({ resultId: "left", path: paths[0], content: content("VALUE = 1\n"), range: null, turn: 1 });
-  const right = await first.session.observe({ resultId: "right", path: paths[1], content: content("VALUE = 2\n"), range: null, turn: 2 });
-  await first.session.observe({ resultId: "safe", path: "safe.py", content: content("SAFE = 3\n"), range: null, turn: 3 });
+  const first = await sessionFor(t, root, "collision-migration");
+  const left = await first.observe({ resultId: "left", path: paths[0], content: content("VALUE = 1\n"), range: null, turn: 1 });
+  const right = await first.observe({ resultId: "right", path: paths[1], content: content("VALUE = 2\n"), range: null, turn: 2 });
+  await first.observe({ resultId: "safe", path: "safe.py", content: content("SAFE = 3\n"), range: null, turn: 3 });
   await saveAsV1(first.store);
   const oldId = "77694816";
   first.store.state.units[oldId] = first.store.state.units[right.unit_id.slice(0, 8)];
@@ -169,9 +152,8 @@ test("opening v1 collision damage quarantines affected observations", async (t) 
   await first.store.save();
   await first.store.close();
 
-  const second = await opened(root, "collision-migration");
-  t.after(() => second.store.close());
-  const plan = await second.session.prepare({
+  const second = await sessionFor(t, root, "collision-migration");
+  const plan = await second.prepare({
     requestId: "quarantine",
     resultIds: ["left", "right", "safe"],
     budgetBytes: 4096,

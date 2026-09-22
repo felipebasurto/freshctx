@@ -25,32 +25,10 @@ const GRAMMAR_FILE = Object.freeze({
   rust: "tree-sitter-rust.wasm",
 });
 
-const DECLARATIONS = new Set([
-  "class_definition",
-  "class_declaration",
-  "abstract_class_declaration",
-  "function_definition",
-  "function_declaration",
-  "generator_function_declaration",
-  "method_definition",
-  "method_declaration",
-  "function_item",
-]);
-
-const CLASS_TYPES = new Set(["class_definition", "class_declaration", "abstract_class_declaration"]);
-const METHOD_TYPES = new Set(["method_definition", "method_declaration"]);
-const FUNCTION_TYPES = new Set([
-  "function_definition",
-  "function_declaration",
-  "generator_function_declaration",
-  "function_item",
-]);
-
-const SCOPE_TYPES = new Map([
+const DECLARATION_KIND = new Map([
   ["class_definition", "class"],
   ["class_declaration", "class"],
   ["abstract_class_declaration", "class"],
-  ["impl_item", "class"],
   ["function_definition", "function"],
   ["function_declaration", "function"],
   ["generator_function_declaration", "function"],
@@ -58,6 +36,8 @@ const SCOPE_TYPES = new Map([
   ["method_definition", "method"],
   ["method_declaration", "method"],
 ]);
+const DECLARATION_TYPES = [...DECLARATION_KIND.keys()];
+const SCOPE_KIND = new Map([...DECLARATION_KIND, ["impl_item", "class"]]);
 
 const BLOCK_TYPES = new Map([
   ["if_statement", "if"],
@@ -85,90 +65,50 @@ const BLOCK_TYPES = new Map([
   ["switch_case", "case"],
 ]);
 
+export const supportedLanguages = Object.freeze([...new Set(LANGUAGE_BY_EXTENSION.values())]);
+
 let runtimeReady = null;
-const languages = new Map();
+const parsers = new Map();
 
 function vendorPath(file) {
   return fileURLToPath(new URL(`../vendor/treesitter/${file}`, import.meta.url));
 }
 
-function extensionOf(sourcePath) {
-  const slash = sourcePath.lastIndexOf("/");
-  const filename = sourcePath.slice(slash + 1).toLowerCase();
-  const dot = filename.lastIndexOf(".");
-  return dot === -1 ? "" : filename.slice(dot);
-}
-
-export function languageForPath(sourcePath) {
-  return LANGUAGE_BY_EXTENSION.get(extensionOf(sourcePath)) ?? null;
-}
-
-export const supportedLanguages = Object.freeze([...new Set(LANGUAGE_BY_EXTENSION.values())]);
-
-async function initializeRuntime() {
-  if (!runtimeReady) {
-    runtimeReady = Parser.init({ locateFile: () => vendorPath("tree-sitter.wasm") });
+function parserFor(language) {
+  if (!parsers.has(language)) {
+    runtimeReady ??= Parser.init({ locateFile: () => vendorPath("tree-sitter.wasm") });
+    parsers.set(language, runtimeReady
+      .then(() => Language.load(vendorPath(GRAMMAR_FILE[language])))
+      .then((grammar) => new Parser().setLanguage(grammar)));
   }
-  await runtimeReady;
+  return parsers.get(language);
 }
 
-async function languageFor(language) {
-  await initializeRuntime();
-  if (!languages.has(language)) {
-    const grammar = await Language.load(vendorPath(GRAMMAR_FILE[language]));
-    languages.set(language, grammar);
+function scopeKind(node) {
+  const kind = SCOPE_KIND.get(node.type) ?? null;
+  if (kind !== "function") return kind;
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (SCOPE_KIND.get(parent.type) === "class") return "method";
   }
-  return languages.get(language);
-}
-
-function namedChildren(node) {
-  return node.namedChildren ?? [];
+  return kind;
 }
 
 function scopeName(node) {
-  if (node.type === "impl_item") return node.childForFieldName("type")?.text ?? null;
-  return node.childForFieldName("name")?.text ?? null;
-}
-
-function isMethodLike(node) {
-  if (METHOD_TYPES.has(node.type)) return true;
-  if (!FUNCTION_TYPES.has(node.type)) return false;
-  for (let parent = node.parent; parent; parent = parent.parent) {
-    if (CLASS_TYPES.has(parent.type) || parent.type === "impl_item") return true;
-  }
-  return false;
-}
-
-function kindFor(node) {
-  if (CLASS_TYPES.has(node.type)) return "class";
-  if (METHOD_TYPES.has(node.type)) return "method";
-  if (FUNCTION_TYPES.has(node.type)) return isMethodLike(node) ? "method" : "function";
-  return null;
+  return node.childForFieldName(node.type === "impl_item" ? "type" : "name")?.text ?? null;
 }
 
 function siblingIndex(node) {
-  const parent = node.parent;
-  if (!parent) return null;
-  const siblings = namedChildren(parent).filter((child) => child.type === node.type);
-  if (siblings.length < 2) return null;
-  const index = siblings.findIndex((child) => child.startIndex === node.startIndex && child.endIndex === node.endIndex);
-  return index < 0 ? null : index;
-}
-
-function segmentForScope(node) {
-  const baseKind = SCOPE_TYPES.get(node.type);
-  if (!baseKind) return null;
-  const kind = baseKind === "function" && isMethodLike(node) ? "method" : baseKind;
-  const name = scopeName(node);
-  return name ? `${kind} ${name}` : null;
+  const siblings = node.parent.namedChildren.filter((child) => child.type === node.type);
+  return siblings.length < 2 ? null : siblings.findIndex((child) => child.equals(node));
 }
 
 function enclosingSelector(node) {
   const segments = [];
   for (let parent = node.parent; parent; parent = parent.parent) {
-    const scope = segmentForScope(parent);
-    if (scope) {
-      segments.push(scope);
+    const kind = scopeKind(parent);
+    const name = kind && scopeName(parent);
+    if (name) {
+      segments.push(`${kind} ${name}`);
       continue;
     }
     const block = BLOCK_TYPES.get(parent.type);
@@ -180,134 +120,59 @@ function enclosingSelector(node) {
   return segments.reverse();
 }
 
-function receiverType(node) {
-  if (node.type !== "method_declaration") return null;
-  const visit = (candidate) => {
-    if (!candidate) return null;
-    if (candidate.type === "type_identifier") return candidate.text;
-    for (const child of candidate.children ?? []) {
-      const found = visit(child);
-      if (found) return found;
-    }
-    return null;
-  };
-  return visit(node.childForFieldName("receiver"));
-}
-
 function qualifiedSelector(node, name, kind) {
   const segments = enclosingSelector(node);
-  const receiver = receiverType(node);
+  const receiver = node.type === "method_declaration"
+    ? node.childForFieldName("receiver")?.descendantsOfType("type_identifier")[0]?.text
+    : null;
   if (receiver && !segments.includes(`class ${receiver}`)) segments.unshift(`class ${receiver}`);
   segments.push(`${kind} ${name}`);
   return segments.join("::");
 }
 
-function inclusiveEndLine(node) {
-  const { startPosition, endPosition } = node;
-  return endPosition.column === 0 && endPosition.row > startPosition.row
-    ? endPosition.row
-    : endPosition.row + 1;
-}
-
-function collectDeclarations(node, output) {
-  if (DECLARATIONS.has(node.type)) output.push(node);
-  for (const child of namedChildren(node)) collectDeclarations(child, output);
-}
-
-class Utf16ToUtf8Index {
-  constructor(offsets) {
-    this.offsets = offsets;
+function utf8Offsets(text, indices) {
+  const offsets = new Map();
+  let previous = 0;
+  let bytes = 0;
+  for (const index of [...new Set(indices)].sort((left, right) => left - right)) {
+    bytes += Buffer.byteLength(text.slice(previous, index), "utf8");
+    offsets.set(index, bytes);
+    previous = index;
   }
-
-  static fromText(text, indices) {
-    const unique = [...new Set(indices)].sort((a, b) => a - b);
-    const offsets = new Map();
-    let previous = 0;
-    let bytes = 0;
-    for (const index of unique) {
-      bytes += Buffer.byteLength(text.slice(previous, index), "utf8");
-      offsets.set(index, bytes);
-      previous = index;
-    }
-    return new Utf16ToUtf8Index(offsets);
-  }
-
-  byteOffset(stringIndex) {
-    return this.offsets.get(stringIndex);
-  }
+  return offsets;
 }
 
-function toUnit(sourcePath, language, text, node, index) {
-  if (node.hasError || node.isMissing) return null;
-  const name = node.childForFieldName("name")?.text;
-  if (!name) return null;
-  const kind = kindFor(node);
-  if (!kind) return null;
-  return {
-    kind: "symbol",
-    symbolKind: kind,
-    path: sourcePath,
-    language,
-    selector: qualifiedSelector(node, name, kind),
-    startLine: node.startPosition.row + 1,
-    endLine: inclusiveEndLine(node),
-    startByte: index.byteOffset(node.startIndex),
-    endByte: index.byteOffset(node.endIndex),
-  };
-}
-
-export async function parseUnits({ path, text }) {
-  const language = languageForPath(path);
-  if (!language) return { status: "unsupported", language: null, units: [] };
-  let parser;
+export async function parseUnits({ path: sourcePath, text }) {
+  const name = sourcePath.slice(sourcePath.lastIndexOf("/") + 1).toLowerCase();
+  const language = LANGUAGE_BY_EXTENSION.get(name.slice(name.lastIndexOf(".")));
+  if (!language) return { status: "unsupported", units: [] };
   let tree;
   try {
-    const grammar = await languageFor(language);
-    parser = new Parser();
-    parser.setLanguage(grammar);
-    tree = parser.parse(text);
-    if (!tree || tree.rootNode.hasError) {
-      return { status: "broken", language, units: [] };
-    }
-    const declarations = [];
-    collectDeclarations(tree.rootNode, declarations);
-    const index = Utf16ToUtf8Index.fromText(
-      text,
-      declarations.flatMap((node) => [node.startIndex, node.endIndex]),
-    );
-    const found = [];
+    tree = (await parserFor(language)).parse(text);
+    if (!tree || tree.rootNode.hasError) return { status: "broken", units: [] };
+    const declarations = tree.rootNode.descendantsOfType(DECLARATION_TYPES);
+    const offsets = utf8Offsets(text, declarations.flatMap((node) => [node.startIndex, node.endIndex]));
+    const units = [];
     for (const node of declarations) {
-      const unit = toUnit(path, language, text, node, index);
-      if (!unit) continue;
-      found.push(unit);
+      const name = scopeName(node);
+      if (!name) continue;
+      units.push({
+        selector: qualifiedSelector(node, name, scopeKind(node)),
+        startByte: offsets.get(node.startIndex),
+        endByte: offsets.get(node.endIndex),
+      });
     }
-    const selectorCounts = new Map();
-    for (const unit of found) selectorCounts.set(unit.selector, (selectorCounts.get(unit.selector) ?? 0) + 1);
-    const units = found.filter((unit) => selectorCounts.get(unit.selector) === 1);
-    units.sort((left, right) => left.startByte - right.startByte || left.endByte - right.endByte || left.selector.localeCompare(right.selector));
-    return { status: "ok", language, units };
+    const counts = new Map();
+    for (const unit of units) counts.set(unit.selector, (counts.get(unit.selector) ?? 0) + 1);
+    return { status: "ok", units: units.filter((unit) => counts.get(unit.selector) === 1) };
   } catch {
-    return { status: "broken", language, units: [] };
+    return { status: "broken", units: [] };
   } finally {
     tree?.delete();
-    parser?.delete();
   }
-}
-
-export async function uniqueUnitForRange({ path, text, range }) {
-  const parsed = await parseUnits({ path, text });
-  if (parsed.status !== "ok") return { ...parsed, unit: null };
-  const matching = parsed.units.filter((unit) => range.startByte >= unit.startByte && range.endByte <= unit.endByte);
-  if (matching.length === 0) return { ...parsed, unit: null };
-  matching.sort((left, right) => (left.endByte - left.startByte) - (right.endByte - right.startByte) || left.selector.localeCompare(right.selector));
-  const smallest = matching[0];
-  if (matching.length > 1 && matching[1].endByte - matching[1].startByte === smallest.endByte - smallest.startByte) {
-    return { ...parsed, unit: null, ambiguous: true };
-  }
-  return { ...parsed, unit: smallest };
 }
 
 export async function verifyTreeSitterAssets() {
-  await Promise.all(supportedLanguages.map((language) => languageFor(language)));
+  await Promise.all(supportedLanguages.map(parserFor));
   return [...supportedLanguages];
 }

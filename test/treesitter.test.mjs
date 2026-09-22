@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseUnits, uniqueUnitForRange, verifyTreeSitterAssets } from "../src/treesitter.mjs";
+import { enclosingParsedUnit } from "../src/relocate.mjs";
+import { parseUnits, verifyTreeSitterAssets } from "../src/treesitter.mjs";
+
+async function unitForRange(sourcePath, text, startByte, endByte) {
+  const parsed = await parseUnits({ path: sourcePath, text });
+  assert.equal(parsed.status, "ok");
+  return enclosingParsedUnit(parsed.units, startByte, endByte);
+}
 
 const fixtures = {
   "a.py": "class Box:\n    def run(self):\n        return 1\n\ndef top():\n    return 2\n",
@@ -45,10 +52,9 @@ test("partial ranges resolve one enclosing symbol with UTF-8 byte offsets", asyn
   const text = "# é\ndef top():\n    return 1\n";
   const startByte = Buffer.byteLength("# é\n", "utf8");
   const endByte = Buffer.byteLength(text, "utf8") - 1;
-  const resolved = await uniqueUnitForRange({ path: "a.py", text, range: { startByte, endByte } });
-  assert.equal(resolved.status, "ok");
-  assert.equal(resolved.unit?.selector, "function top");
-  assert.equal(resolved.unit?.startByte, startByte);
+  const resolved = await unitForRange("a.py", text, startByte, endByte);
+  assert.equal(resolved?.selector, "function top");
+  assert.equal(resolved?.startByte, startByte);
 });
 
 test("shared UTF-16 to UTF-8 offsets stay aligned for BOM, emoji, and many declarations", async () => {
@@ -65,11 +71,7 @@ test("shared UTF-16 to UTF-8 offsets stay aligned for BOM, emoji, and many decla
   }
   const cafe = "\uFEFFdef café():\n    return '🙂'\n";
   const startByte = Buffer.byteLength("\uFEFF", "utf8");
-  const resolved = await uniqueUnitForRange({
-    path: "a.py",
-    text: cafe,
-    range: { startByte, endByte: startByte + 8 },
-  });
-  assert.equal(resolved.unit?.selector, "function café");
-  assert.equal(resolved.unit?.startByte, startByte);
+  const resolved = await unitForRange("a.py", cafe, startByte, startByte + 8);
+  assert.equal(resolved?.selector, "function café");
+  assert.equal(resolved?.startByte, startByte);
 });
