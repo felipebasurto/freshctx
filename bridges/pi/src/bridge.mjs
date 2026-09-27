@@ -18,7 +18,8 @@ export class Bridge {
     });
   }
 
-  async read(resultId, { path, offset = 1, limit = 200 }) {
+  async read(resultId, { path, offset = 1, limit: requestedLimit }) {
+    const limit = requestedLimit ?? 200;
     await this.ready;
     if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1) throw new Error('offset and limit must be positive integers');
     const workspace = await openWorkspace(this.root);
@@ -30,9 +31,10 @@ export class Bridge {
     const text = raw.replace(/(?:\r?\n)+$/u, '') || raw;
     const start = Buffer.byteLength(lines.slice(0, offset - 1).join(''));
     const end = start + Buffer.byteLength(text);
+    const wholeFile = requestedLimit === undefined && offset === 1 && limit >= lines.length && text.trim().length > 0;
     await this.client.request('observe', {
       result_id: resultId, path: snapshot.path, content_utf8_base64: Buffer.from(text).toString('base64'),
-      ...(end > start ? { range: { start_byte: start, end_byte: end } } : {}),
+      ...(end > start && !wholeFile ? { range: { start_byte: start, end_byte: end } } : {}),
     });
     return { content: [{ type: 'text', text }], details: { path: snapshot.path, startByte: start, endByte: end, totalLines: lines.length } };
   }

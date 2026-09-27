@@ -43,6 +43,22 @@ test('later read reaches unread symbols; no whole-file workaround', async t => {
   assert.match(JSON.stringify(rewritten), /return RATE \* 2/);
   assert.doesNotMatch(JSON.stringify(rewritten), /RATE = 10/);
 });
+test('a read of the whole file without a limit follows the file, including appended code', async t => {
+  const { root, bridge } = await fixture(t);
+  const read = await bridge.read('read_1', { path: 'price.py' });
+  await writeFile(join(root, 'price.py'), body + '\r\ndef discount():\r\n    return 5\r\n');
+  const text = JSON.stringify(await bridge.rewrite(request(read.content[0].text)));
+  assert.match(text, /def total/);
+  assert.match(text, /def discount/);
+});
+test('an explicit limit that happens to cover the file stays a range read', async t => {
+  const { root, bridge } = await fixture(t);
+  const read = await bridge.read('read_1', { path: 'price.py', limit: 200 });
+  await writeFile(join(root, 'price.py'), body + '\r\ndef discount():\r\n    return 5\r\n');
+  const text = JSON.stringify(await bridge.rewrite(request(read.content[0].text)));
+  assert.match(text, /def total/);
+  assert.doesNotMatch(text, /def discount/);
+});
 test('a blank-line-only read never becomes an implicit whole-file read', async t => {
   const { bridge } = await fixture(t);
   const read = await bridge.read('read_1', { path: 'price.py', offset: 3, limit: 1 });

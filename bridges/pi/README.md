@@ -64,6 +64,9 @@ credentials are needed. Frozen benchmark reports remain separate.
   UTF-8 byte offsets and internal CRLFs, excluding terminal line separators.
   Symlinks, paths outside the workspace, non-UTF-8 files, images, and files
   over 512 KiB fail closed without returning source content.
+- A read without `limit` that returns the whole file tracks the file: later
+  edits and appended code are projected. A read with an explicit `limit` stays
+  a range, even when it happens to cover the whole file.
 - A header read stays a region. It does not establish that unread functions
   are absent. Use another ranged read to inspect later code. Region relocation uses byte anchors and text similarity; ambiguous mappings
   require a new read. A declaration read can widen to its whole function, and

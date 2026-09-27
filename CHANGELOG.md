@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Pi: a read without `limit` that returns the whole file is observed as the
+  file, so code appended after the read is projected too. Explicit ranges
+  keep region and symbol tracking.
 - Refresh whole-file and edge-touching region reads after an edit. A region
   anchor shorter than 128 bytes means the region reaches the start or end of
   the file; relocation now pins it there instead of searching for the short
