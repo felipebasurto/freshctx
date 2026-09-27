@@ -287,6 +287,7 @@ class MiniBridge:
         budget_bytes: int = DEFAULT_BUDGET_BYTES,
         max_output_chars: int = MAX_OUTPUT_CHARS,
         log_path: str | Path | None = None,
+        audit_path: str | Path | None = None,
         client: Client | None = None,
     ) -> None:
         if mode not in MODES:
@@ -300,6 +301,8 @@ class MiniBridge:
         self.budget_bytes = budget_bytes
         self.max_output_chars = max_output_chars
         self.log_path = Path(log_path) if log_path else None
+        self.audit_path = Path(audit_path) if audit_path else None
+        self.audit_until = 1  # dump the first request, then the two after each intervention
         self.render: Callable[[dict[str, Any]], str] | None = None
         self.observed: dict[str, Observed] = {}
         self.paths: set[str] = set()
@@ -492,6 +495,7 @@ class MiniBridge:
                 })
             if self.notice and notes:
                 self.pending_notices.append("\n\n".join(notes))
+            self.audit_until = self.requests + 2
             self.log("intervention", command_index=command_index, applied=True, scenario_id=event.get("scenario_id"),
                      intervention_index=event.get("intervention_index"), files=sorted(files))
 
@@ -519,6 +523,10 @@ class MiniBridge:
             outgoing = outgoing if outgoing is not messages else copy.deepcopy(messages)
             outgoing.extend({"role": "user", "content": note} for note in notices)
         self.log("request", **entry, rewritten=outgoing is not messages and self.mode == "rewrite")
+        if self.audit_path is not None and self.requests <= self.audit_until:
+            with self.audit_path.open("a", encoding="utf-8") as handle:
+                sent = [{k: v for k, v in message.items() if k != "extra"} for message in outgoing]
+                handle.write(json.dumps({"request": self.requests, "messages": sent}, ensure_ascii=False) + "\n")
         return outgoing
 
     def _flush_uncovered(self) -> None:

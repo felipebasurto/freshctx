@@ -177,7 +177,8 @@ class AgentRun:
         self.env = TouchEnvironment(repo=str(self.repo), patches=patches or {})
         self.model = RecordingModel(outputs=scripted(commands), observation_template=MINI["model"]["observation_template"])
         self.bridge = MiniBridge(mirror_root=base / "mirror", repo_root=str(self.repo), internal_exec=self.env.internal_exec,
-                                 mode=mode, notice=notice, session_id="test", log_path=self.log)
+                                 mode=mode, notice=notice, session_id="test", log_path=self.log,
+                                 audit_path=base / "audit.jsonl")
         test.addCleanup(self.bridge.close)
         agent_config = {**{k: v for k, v in MINI["agent"].items() if k != "mode"}, "cost_limit": 0}
         self.agent = DefaultAgent(FreshCtxModel(self.model, self.bridge), FreshCtxEnvironment(self.env, self.bridge), **agent_config)
@@ -252,6 +253,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([c["index"] for c in observed], [1, 2, 3])
         requests = run.events("request")
         self.assertTrue(all(r["rewritten"] for r in requests[1:]))
+        audit = [json.loads(line) for line in (run.log.parent / "audit.jsonl").read_text().splitlines()]
+        self.assertEqual([entry["request"] for entry in audit], [1, 4, 5])
+        self.assertEqual(audit[1]["messages"], [{k: v for k, v in m.items() if k != "extra"} for m in request])
         status = run.bridge.client.request("status")
         self.assertEqual(status["counts"]["committed_plans"], len(requests) - 1)
 
