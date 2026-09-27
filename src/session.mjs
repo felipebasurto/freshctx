@@ -48,6 +48,12 @@ function normalizeGranularity(value) {
   fail("invalid_request", "selection_granularity must be region or file");
 }
 
+function normalizeRefresh(value) {
+  if (value === undefined) return "all";
+  if (value === "all" || value === "changed") return value;
+  fail("invalid_request", "refresh must be all or changed");
+}
+
 async function readSnapshot(workspace, sourcePath) {
   const snapshot = await readStableText(workspace, sourcePath);
   return { ...snapshot, revision: revisionFor(snapshot.bytes) };
@@ -352,6 +358,30 @@ export class FreshCtxSession {
       : this.fileFallbackForSymbol(unit, snapshot, observedAt);
   }
 
+  /** The file's revision if the observed bytes are still exactly where they were read, else null. */
+  async currentRevision(observation, sources) {
+    let snapshot;
+    try {
+      snapshot = await sources.snapshot(observation.path);
+    } catch {
+      return null;
+    }
+    const { range, observedRevision } = observation;
+    if (range) {
+      const { bytes } = snapshot;
+      if (range.endByte > bytes.length) return null;
+      // Reads are line based: a range that no longer starts and ends on line boundaries
+      // (for example code appended to its last line) is stale even if its bytes are unchanged.
+      const startsLine = range.startByte === 0 || bytes[range.startByte - 1] === 0x0a;
+      const endsLine = range.endByte === bytes.length || bytes[range.endByte] === 0x0a || bytes[range.endByte] === 0x0d;
+      if (!startsLine || !endsLine) return null;
+      return revisionFor(bytes.subarray(range.startByte, range.endByte)) === observedRevision ? snapshot.revision : null;
+    }
+    if (snapshot.revision === observedRevision) return snapshot.revision;
+    const trimmed = snapshot.text.replace(/(?:\r?\n)+$/u, "");
+    return trimmed !== snapshot.text && revisionFor(trimmed) === observedRevision ? snapshot.revision : null;
+  }
+
   async hydrate(record) {
     const response = structuredClone(record.response);
     const bytes = await this.store.getBlob(response.projection_sha256);
@@ -362,10 +392,12 @@ export class FreshCtxSession {
 
   async prepare(request) {
     const granularity = normalizeGranularity(request.granularity);
+    const refresh = normalizeRefresh(request.refresh);
     const fingerprint = JSON.stringify({
       resultIds: [...request.resultIds].sort(),
       budgetBytes: request.budgetBytes,
       granularity,
+      ...(refresh === "all" ? {} : { refresh }),
     });
     const { observations, units, pendingPlans, committedPlans } = this.store.state;
     if (dropExpiredPending(pendingPlans)) await this.store.save();
@@ -382,8 +414,19 @@ export class FreshCtxSession {
       if (observation) requested.push(observation);
       else unresolvedResults.push({ result_id: resultId, reason: "unknown_result" });
     }
+    const sources = new SourceCache(this.workspace);
+    // refresh "changed": a read whose observed bytes are still current stays native, so the
+    // request prefix (and the provider's prompt cache) is untouched until the code changes.
+    const kept = new Map();
+    if (refresh === "changed") {
+      for (const observation of requested) {
+        const revision = observation.unavailable ? null : await this.currentRevision(observation, sources);
+        if (revision) kept.set(observation.resultId, { path: observation.path, sourceRevision: revision });
+      }
+    }
     const groups = new Map();
     for (const observation of requested) {
+      if (kept.has(observation.resultId)) continue;
       if (observation.unavailable) {
         unresolvedResults.push({ result_id: observation.resultId, path: observation.path, reason: observation.unavailable.reason });
       } else if (groups.has(observation.unitId)) {
@@ -393,7 +436,6 @@ export class FreshCtxSession {
       }
     }
 
-    const sources = new SourceCache(this.workspace);
     const refreshed = new Map();
     const candidates = [];
     for (const [unitId, group] of groups) {
@@ -417,6 +459,7 @@ export class FreshCtxSession {
     const selectedIds = new Set(projection.selected.map((unit) => unit.id));
     const omittedReasons = new Map(projection.omitted.map((item) => [item.unitId, item.reason]));
     const replacements = requested.map(({ resultId, unitId, observedRevision, unavailable }) => {
+      if (kept.has(resultId)) return { result_id: resultId, expected_sha256: observedRevision, marker: stableMarker(unitId), keep: true };
       let marker;
       if (unavailable) marker = unavailableMarker(unavailable.legacyUnitId, unavailable.reason);
       else if (selectedIds.has(unitId)) marker = stableMarker(unitId);
@@ -439,16 +482,17 @@ export class FreshCtxSession {
       unresolved: unresolvedResults,
       unit_states: Object.fromEntries(projection.selected.map((unit) => [unit.id, unitState(unit)])),
       selection_granularity: granularity,
+      refresh,
       ...(granularity === "region" ? { whole_file_equivalent: await wholeFileEquivalent(sources, projection.selected) } : {}),
     };
     pendingPlans[request.requestId] = {
       planId: response.plan_id,
       fingerprint,
       response: compactResponse(response),
-      references: [...new Map(projection.selected.map((unit) => [unit.path, {
-        path: unit.path,
-        sourceRevision: unit.sourceRevision,
-      }])).values()],
+      references: [...new Map([
+        ...[...kept.values()].map((reference) => [reference.path, reference]),
+        ...projection.selected.map((unit) => [unit.path, { path: unit.path, sourceRevision: unit.sourceRevision }]),
+      ]).values()],
       preparedAt: Date.now(),
     };
     boundPending(pendingPlans);

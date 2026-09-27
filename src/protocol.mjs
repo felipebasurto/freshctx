@@ -114,6 +114,7 @@ export function parseRequest(value) {
         resultIds,
         budgetBytes: requiredSafeInteger(requiredField(value, "budget_bytes"), "budget_bytes"),
         granularity: optionalField(value, "selection_granularity"),
+        refresh: optionalField(value, "refresh"),
       };
     }
     case "commit":

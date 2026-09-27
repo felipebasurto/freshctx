@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `prepare` accepts `refresh: "changed"` (cache-preserving freshness). A read
+  whose bytes are still where they were read, on line boundaries, is kept
+  native (`keep: true`) and not projected; only units behind stale reads are
+  refreshed. With no external change the outgoing request equals the native
+  one. Commit also revalidates kept reads' files. Pi (`FRESHCTX_REFRESH=changed`)
+  and Mini-SWE-Agent (`refresh="changed"`) bridges support it; `all` stays the
+  default.
 - Mini-SWE-Agent bridge (`bridges/mini-swe-agent`): observes allowlisted
   shell reads (`cat`, `cat -n`, `nl -ba`, `sed -n 'A,Bp'`, `nl -ba | sed -n`,
   `head -n`, `tail -n`) only when the output equals a host mirror of the

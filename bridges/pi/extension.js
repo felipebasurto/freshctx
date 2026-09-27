@@ -13,7 +13,7 @@ export default function freshctx(pi) {
       bridge = undefined;
     }
     if (!bridge) {
-      bridge = new Bridge({ root: ctx.cwd, sessionId });
+      bridge = new Bridge({ root: ctx.cwd, sessionId, refresh: process.env.FRESHCTX_REFRESH === 'changed' ? 'changed' : 'all' });
       bridgeSessionId = sessionId;
     }
     await bridge.ready;

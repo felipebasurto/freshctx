@@ -285,6 +285,7 @@ class MiniBridge:
         notice: bool | str = False,
         session_id: str | None = None,
         budget_bytes: int = DEFAULT_BUDGET_BYTES,
+        refresh: str = "all",
         max_output_chars: int = MAX_OUTPUT_CHARS,
         log_path: str | Path | None = None,
         audit_path: str | Path | None = None,
@@ -302,6 +303,9 @@ class MiniBridge:
         self.repo_root = repo_root.rstrip("/") or "/"
         self.internal_exec = internal_exec
         self.budget_bytes = budget_bytes
+        if refresh not in ("all", "changed"):
+            raise ValueError("refresh must be all or changed")
+        self.refresh_policy = refresh  # "changed": current reads stay native (prompt-cache friendly)
         self.max_output_chars = max_output_chars
         self.log_path = Path(log_path) if log_path else None
         self.audit_path = Path(audit_path) if audit_path else None
@@ -556,13 +560,17 @@ class MiniBridge:
                 by_id[message["tool_call_id"]] = message
         result_ids = [result_id for result_id in self.observed if result_id in by_id]
         try:
-            plan = self.client.request("prepare", {"request_id": str(uuid4()), "result_ids": result_ids, "budget_bytes": self.budget_bytes})
+            fields = {"request_id": str(uuid4()), "result_ids": result_ids, "budget_bytes": self.budget_bytes}
+            if self.refresh_policy != "all":
+                fields["refresh"] = self.refresh_policy
+            plan = self.client.request("prepare", fields)
         except RuntimeError as error:
             raise FreshCtxBlocked(f"prepare failed: {error}") from error
         projection = base64.b64decode(plan["projection_utf8_base64"]).decode("utf-8")
         if revision_for(projection) != plan["projection_sha256"] or len(projection.encode("utf-8")) > self.budget_bytes:
             raise FreshCtxBlocked("invalid projection hash or budget")
         replacements: dict[str, str] = {}
+        kept: set[str] = set()
         for replacement in plan["replacements"]:
             result_id = replacement["result_id"]
             record = self.observed.get(result_id)
@@ -570,15 +578,18 @@ class MiniBridge:
             native = message.get("content") if message else None
             extra = message.get("extra", {}) if message else {}
             if (
-                record is None or message is None or result_id in replacements
+                record is None or message is None or result_id in replacements or result_id in kept
                 or replacement["expected_sha256"] != record.content_sha256
                 or not isinstance(native, str) or _sha(native) != record.rendered_sha256
                 or extra.get("raw_output", record.output) != record.output
                 or not isinstance(replacement.get("marker"), str)
             ):
                 raise FreshCtxBlocked("native tool result changed; entire FreshCtx plan discarded")
+            if replacement.get("keep") is True:
+                kept.add(result_id)
+                continue
             replacements[result_id] = self.render({"output": replacement["marker"], "returncode": record.returncode, "exception_info": record.exception_info})
-        missing = [result_id for result_id in result_ids if result_id not in replacements]
+        missing = [result_id for result_id in result_ids if result_id not in replacements and result_id not in kept]
         if missing:
             raise FreshCtxBlocked("FreshCtx has no observation for an observed shell read")
         outgoing = copy.deepcopy(messages)
@@ -591,10 +602,11 @@ class MiniBridge:
         committed = self.client.request("commit", {"plan_id": plan["plan_id"]})
         if committed.get("applied") is not True:
             raise FreshCtxBlocked("FreshCtx did not commit")
-        markers = [replacement["marker"] for replacement in plan["replacements"]]
+        markers = [replacement["marker"] for replacement in plan["replacements"] if not replacement.get("keep")]
         return outgoing, {
             "observed_results": len(result_ids),
             "replaced": len(replacements),
+            "kept": len(kept),
             "projection_bytes": len(projection.encode("utf-8")),
             "selected": len(plan["selected"]),
             "omitted": [item.get("reason") for item in plan["omitted"]],

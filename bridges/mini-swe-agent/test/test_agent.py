@@ -160,7 +160,7 @@ def decode_frames(projection):
 
 
 class AgentRun:
-    def __init__(self, test, commands, *, mode="rewrite", notice=False, patches=None):
+    def __init__(self, test, commands, *, mode="rewrite", notice=False, patches=None, refresh="all"):
         self.tmp = tempfile.TemporaryDirectory()
         test.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
@@ -177,7 +177,7 @@ class AgentRun:
         self.env = TouchEnvironment(repo=str(self.repo), patches=patches or {})
         self.model = RecordingModel(outputs=scripted(commands), observation_template=MINI["model"]["observation_template"])
         self.bridge = MiniBridge(mirror_root=base / "mirror", repo_root=str(self.repo), internal_exec=self.env.internal_exec,
-                                 mode=mode, notice=notice, session_id="test", log_path=self.log,
+                                 mode=mode, notice=notice, refresh=refresh, session_id="test", log_path=self.log,
                                  audit_path=base / "audit.jsonl")
         test.addCleanup(self.bridge.close)
         agent_config = {**{k: v for k, v in MINI["agent"].items() if k != "mode"}, "cost_limit": 0}
@@ -271,6 +271,23 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(run.model.requests[3][-1], {"role": "user", "content": expected})
         self.assertFalse(any(str(m.get("content", "")).startswith("[Note:") for m in run.agent.messages))
         self.assertEqual(run.env.internal_calls, 2)  # repository root + the patched file, nothing per read
+
+    def test_refresh_changed_sends_native_requests_until_the_user_edit(self):
+        run = AgentRun(self, trigger, patches={3: USER_PATCH}, refresh="changed")
+        run.run()
+        native = run.agent.messages
+        for request in run.model.requests[:3]:  # before the edit: byte-identical to the saved history
+            self.assertEqual(request, native[:len(request)])
+        after = run.model.requests[3]
+        marker = json.loads(run.tool(after, "call_3")["content"])["output"]
+        self.assertRegex(marker, r"^\[[0-9a-f]{24}\]$")  # the read the edit touched
+        self.assertEqual(run.tool(after, "call_2"), run.tool(native, "call_2"))  # util.py unchanged: native
+        frames = decode_frames(after[-1]["content"])
+        self.assertEqual({path for path, _, _ in frames}, {"pkg/lexer.py"})
+        self.assertTrue(any('if text[end] == "_":' in body for _, _, body in frames))
+        self.assertEqual([c["covered"] for c in run.events("coverage")], ["full"])
+        final = run.model.requests[-1]  # the agent edited util.py itself: now it is refreshed too
+        self.assertIn("pkg/util.py", {path for path, _, _ in decode_frames(final[-1]["content"])})
 
     def test_persistent_notice_stays_at_its_place_in_later_requests(self):
         run = AgentRun(self, trigger, mode="off", notice="persist", patches={3: USER_PATCH})

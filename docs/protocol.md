@@ -79,15 +79,25 @@ Default granularity is `region` (files, symbols, and regions); `file` widens
 resolved candidates to whole files **before** budget selection. A file that no
 longer fits may be omitted, so the two modes need not select the same units.
 
+`refresh` is `all` (default) or `changed`. With `all`, every known observation
+gets a marker and every resolved unit is a projection candidate. With
+`changed`, an observation whose bytes are still exactly where they were read
+(same range, still on line boundaries; or the same whole file) is **kept**: its
+replacement carries `"keep": true`, the bridge leaves the native result in
+place (after the same hash check), and its unit is not projected on its behalf.
+Only units behind a stale read are refreshed and projected, so while nothing
+changes the outgoing copy equals the native request and the provider's prompt
+cache is untouched. Commit also revalidates the files of kept observations.
+
 A successful plan contains:
 
 | Field | Meaning |
 | --- | --- |
 | `plan_id` | Session-scoped plan identity used by `commit`. |
-| `replacements` | `{ result_id, expected_sha256, marker }` for known observations. |
+| `replacements` | `{ result_id, expected_sha256, marker }` for known observations; with `refresh: "changed"`, `keep: true` marks a current read to leave native. |
 | `projection_utf8_base64`, `projection_sha256` | One current projection and its SHA-256 revision. |
 | `selected`, `omitted`, `unresolved` | Selected unit IDs, `{ unitId, reason }` omissions, and unresolved result metadata. Unknown result IDs appear as `unknown_result`. |
-| `selection_granularity` | Mode the engine actually used. |
+| `selection_granularity`, `refresh` | Modes the engine actually used. |
 | `unit_states` | Resolution/mapping status and byte ranges for selected units. A symbol status of `stable` describes its mapping; it is not a claim that its body is unchanged. |
 | `whole_file_equivalent` | Region mode only: unique selected paths with raw source byte lengths and their sum. This excludes frame headers and does not run a whole-file control arm. |
 

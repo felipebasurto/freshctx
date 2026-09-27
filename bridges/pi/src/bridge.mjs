@@ -7,10 +7,11 @@ import { Client } from 'freshctx/client';
 const EMPTY_TOOL_OUTPUT = '(no tool output)';
 
 export class Bridge {
-  constructor({ root, sessionId, budgetBytes = 131072, client = new Client({ root }) }) {
+  constructor({ root, sessionId, budgetBytes = 131072, refresh = 'all', client = new Client({ root }) }) {
     this.root = root;
     this.client = client;
     this.budgetBytes = budgetBytes;
+    this.refresh = refresh;
     this.ready = client.request('hello', {
       session_id: sessionId,
       adapter: 'freshctx-pi/openai-completions',
@@ -61,6 +62,7 @@ export class Bridge {
     }
     const plan = await this.client.request('prepare', {
       request_id: randomUUID(), result_ids: [...byId.keys()], budget_bytes: this.budgetBytes,
+      ...(this.refresh === 'all' ? {} : { refresh: this.refresh }),
     });
     const projection = Buffer.from(plan.projection_utf8_base64, 'base64').toString('utf8');
     if (revisionFor(projection) !== plan.projection_sha256 || Buffer.byteLength(projection) > this.budgetBytes) throw new Error('Invalid projection hash or budget');
@@ -69,7 +71,7 @@ export class Bridge {
       const result = byId.get(replacement.result_id);
       const text = result?.content === EMPTY_TOOL_OUTPUT && replacement.expected_sha256 === revisionFor('') ? '' : result?.content;
       if (typeof text !== 'string' || revisionFor(text) !== replacement.expected_sha256 || typeof replacement.marker !== 'string' || replacements.has(replacement.result_id)) throw new Error('Native tool result changed; entire FreshCtx plan discarded');
-      replacements.set(replacement.result_id, replacement.marker);
+      replacements.set(replacement.result_id, replacement.keep === true ? null : replacement.marker);
     }
     for (const id of byId.keys()) {
       if (reads.has(id) && !failed.has(id) && !replacements.has(id)) {
@@ -78,7 +80,7 @@ export class Bridge {
     }
     const copy = structuredClone(payload);
     for (const message of copy.messages) {
-      if (message.role === 'tool' && replacements.has(message.tool_call_id)) message.content = replacements.get(message.tool_call_id);
+      if (message.role === 'tool' && replacements.get(message.tool_call_id) != null) message.content = replacements.get(message.tool_call_id);
     }
     if (projection) copy.messages.push({ role: 'user', content: projection });
     const committed = await this.client.request('commit', { plan_id: plan.plan_id });

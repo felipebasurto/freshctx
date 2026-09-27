@@ -102,3 +102,9 @@ symlinks, traversal, stale commits, resume, and child timeouts. Scores from
 frozen fixtures and are not scores for this Pi integration.
 
 MIT. Felipe Basurto, [felipebasurto.com](https://felipebasurto.com).
+
+## Cache-preserving mode
+
+`FRESHCTX_REFRESH=changed` asks the engine to keep reads whose bytes are still
+current in place and to project only units behind stale reads. While nothing
+changes, the provider request is identical to Pi's native one. Default: `all`.

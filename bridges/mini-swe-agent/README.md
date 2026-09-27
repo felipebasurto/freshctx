@@ -39,6 +39,9 @@ and commands run in a remote sandbox.
    `[Note: <path> was changed outside this session after your earlier work. The change:`
    followed by a fenced unified diff with 3 lines of context and `]`.
 
+`refresh="changed"` keeps current reads native and projects only units behind
+stale reads (cache-preserving; default `all`).
+
 Modes: `off`, `shadow` (observe and prepare for coverage, dispatch the native
 request) and `rewrite`. Events go to a JSONL log (`command`, `request`,
 `intervention`, `coverage`).

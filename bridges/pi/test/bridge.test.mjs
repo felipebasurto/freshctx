@@ -239,3 +239,21 @@ test('e11-10: overlapping ranged reads keep the region that covers the edit', as
   assert.match(projection, /value_335 = 336  # edited/);
   assert.match(projection, /value_1 = 1  # line 1\n/);
 });
+
+test('refresh changed: an unchanged read stays native and nothing is projected until the code changes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'freshctx-pi-refresh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'price.py'), body);
+  const bridge = new Bridge({ root, sessionId: 'refresh', refresh: 'changed' });
+  t.after(() => bridge.close());
+  const read = await bridge.read('read_1', { path: 'price.py', limit: 2 });
+  const native = request(read.content[0].text);
+  assert.deepEqual(await bridge.rewrite(native), native);
+  await writeFile(join(root, 'price.py'), body.replace('10', '20'));
+  const changed = await bridge.rewrite(native);
+  assert.match(changed.messages[1].content, /^\[[0-9a-f]{24}\]$/);
+  assert.match(changed.messages.at(-1).content, /RATE = 20/);
+  const tampered = request(read.content[0].text.replace('10', '11'));
+  await writeFile(join(root, 'price.py'), body);
+  await assert.rejects(bridge.rewrite(tampered), /Native tool result changed/);
+});
