@@ -63,14 +63,17 @@ function endsBefore(snapshotBytes, suffix) {
   return at >= 0 && snapshotBytes.subarray(at).equals(suffix) ? [at] : [];
 }
 
-function bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt) {
+function bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt, prevStart) {
   const fits = (start, end) => end > start && end - start <= maxSpanBytes;
   const starts = startsAfter(snapshotBytes, prefix);
   const ends = endsBefore(snapshotBytes, suffix);
-  const bracketed = starts.filter((start) => {
+  let bracketed = starts.filter((start) => {
     const end = ends.find((candidate) => candidate > start);
     return end !== undefined && fits(start, end);
   });
+  // A repeated prefix anchor is not ambiguous when one occurrence still ends exactly where the
+  // region used to start: nothing before the region moved, so that is where it starts.
+  if (bracketed.length > 1 && !pinned(prefix) && bracketed.includes(prevStart)) bracketed = [prevStart];
   if (bracketed.length !== 1) return bracketed.length === 0 ? NONE : AMBIGUOUS;
   const [start] = bracketed;
   const [nearest, ...longer] = ends.filter((end) => fits(start, end));
@@ -147,7 +150,7 @@ export function relocateRegion({
     return { status: "relocated", startByte: anchored[0], endByte: anchored[0] + referentBytes.length };
   }
 
-  const bracketed = bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt);
+  const bracketed = bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt, prevStart);
   if (bracketed.status === "unique" && sameParent(bracketed.startByte, bracketed.endByte)
     && similarEnough(bracketed.startByte, bracketed.endByte)) {
     return { status: "updated", startByte: bracketed.startByte, endByte: bracketed.endByte };

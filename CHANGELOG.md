@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Region relocation: when a region's prefix anchor occurs more than once after
+  an edit, the occurrence that still ends at the region's previous start wins
+  (nothing before the region moved). Other repeated-anchor cases stay
+  `ambiguous`. Resolves E11c e11-10's `ambiguous` 320–379 read offline.
 - `prepare` accepts `refresh: "changed"` (cache-preserving freshness). A read
   whose bytes are still where they were read, on line boundaries, is kept
   native (`keep: true`) and not projected; only units behind stale reads are

@@ -317,3 +317,20 @@ test("identical region fingerprints at different offsets keep distinct identitie
   assert.deepEqual(moved.selected, [], "indistinguishable moved occurrences must be omitted");
   assert.equal(moved.unresolved.length, 2);
 });
+
+test("a repeated prefix anchor resolves to the start that did not move, and only to it", async () => {
+  const { anchorsFor } = await import("../src/relocate.mjs");
+  const header = `# ${"shared header line ".repeat(8)}\n`;
+  const region = "def target(x):\n    total = x\n    for step in range(3):\n        total += step\n    return total\n";
+  const suffix = `\n# ${"unique trailing context ".repeat(7)}\n`;
+  const before = `import os\n${header}value = 1\n${header}${region}${suffix}`;
+  const edited = region.replace("    return total\n", "    if total < 0:\n        total = 0\n    return total\n");
+  const bytes = Buffer.from(before);
+  const start = bytes.indexOf(Buffer.from(region));
+  const end = start + Buffer.byteLength(region);
+  const common = { parsedUnits: [], parsedOk: false, referentBytes: Buffer.from(region), ...anchorsFor(bytes, start, end), prevStart: start, prevEnd: end };
+  const after = Buffer.from(before.replace(region, edited));
+  assert.deepEqual(relocateRegion({ snapshotBytes: after, ...common }), { status: "updated", startByte: start, endByte: start + Buffer.byteLength(edited) });
+  const shifted = Buffer.from(`# moved\n${before.replace(region, edited)}`);
+  assert.equal(relocateRegion({ snapshotBytes: shifted, ...common }).status, "ambiguous");
+});
