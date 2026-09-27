@@ -272,6 +272,17 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(any(str(m.get("content", "")).startswith("[Note:") for m in run.agent.messages))
         self.assertEqual(run.env.internal_calls, 2)  # repository root + the patched file, nothing per read
 
+    def test_persistent_notice_stays_at_its_place_in_later_requests(self):
+        run = AgentRun(self, trigger, mode="off", notice="persist", patches={3: USER_PATCH})
+        run.run()
+        note = run.model.requests[3][-1]
+        self.assertTrue(note["content"].startswith("[Note: pkg/lexer.py was changed"))
+        position = len(run.model.requests[3]) - 1
+        for later in run.model.requests[4:]:
+            self.assertEqual(later[position], note)
+            self.assertEqual(later[:position] + later[position + 1:], run.agent.messages[:len(later) - 1])
+        self.assertFalse(any(str(m.get("content", "")).startswith("[Note:") for m in run.agent.messages))
+
     def test_shadow_dispatches_native_requests_and_still_logs_coverage(self):
         run = AgentRun(self, trigger, mode="shadow", patches={3: USER_PATCH})
         run.run()

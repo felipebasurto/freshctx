@@ -9,7 +9,7 @@ projection of current code is appended. The saved trajectory is unchanged.
 
 Modes: ``off`` (no FreshCtx), ``shadow`` (observe and prepare for coverage
 logging, dispatch the native request), ``rewrite`` (dispatch the rewritten
-copy). ``notice=True`` appends a one-time change notice with a unified diff to
+copy). ``notice="once"`` (or ``True``) appends a change notice with a unified diff to
 the request after each applied intervention, in the outgoing copy only.
 """
 
@@ -282,7 +282,7 @@ class MiniBridge:
         repo_root: str,
         internal_exec: Callable[[str, str | None], tuple[str, int]],
         mode: str = "rewrite",
-        notice: bool = False,
+        notice: bool | str = False,
         session_id: str | None = None,
         budget_bytes: int = DEFAULT_BUDGET_BYTES,
         max_output_chars: int = MAX_OUTPUT_CHARS,
@@ -293,7 +293,10 @@ class MiniBridge:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         self.mode = mode
-        self.notice = notice
+        self.notice = {True: "once", False: "off"}.get(notice, notice) if isinstance(notice, bool) else (notice or "off")
+        if self.notice not in ("off", "once", "persist"):
+            raise ValueError("notice must be off, once or persist")
+        self.sent_notices: list[tuple[int, str]] = []  # (position in the native history, text) for "persist"
         self.mirror = Path(mirror_root)
         self.mirror.mkdir(parents=True, exist_ok=True)
         self.repo_root = repo_root.rstrip("/") or "/"
@@ -493,7 +496,7 @@ class MiniBridge:
                     "command_index": command_index,
                     "notice_source": source,
                 })
-            if self.notice and notes:
+            if self.notice != "off" and notes:
                 self.pending_notices.append("\n\n".join(notes))
             self.audit_until = self.requests + 2
             self.log("intervention", command_index=command_index, applied=True, scenario_id=event.get("scenario_id"),
@@ -519,9 +522,16 @@ class MiniBridge:
                     self.log("request", **entry, rewritten=False)
                     raise
         self._flush_uncovered()
-        if notices:
+        if notices or self.sent_notices:
             outgoing = outgoing if outgoing is not messages else copy.deepcopy(messages)
+            # Earlier persistent notices return at the place they were first sent; new ones go last.
+            ordered = sorted(enumerate(self.sent_notices), key=lambda item: (item[1][0], item[0]), reverse=True)
+            for _, (position, note) in ordered:
+                outgoing.insert(position, {"role": "user", "content": note})
             outgoing.extend({"role": "user", "content": note} for note in notices)
+            if self.notice == "persist":
+                base = len(messages)
+                self.sent_notices.extend((base + offset, note) for offset, note in enumerate(notices))
         self.log("request", **entry, rewritten=outgoing is not messages and self.mode == "rewrite")
         if self.audit_path is not None and self.requests <= self.audit_until:
             with self.audit_path.open("a", encoding="utf-8") as handle:

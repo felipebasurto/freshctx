@@ -31,8 +31,11 @@ and commands run in a remote sandbox.
 4. **Coverage log.** For each applied intervention reported by the host, the
    bridge records whether the changed bytes lie inside the selected units of the
    next plan (`full`, `partial`, `none`).
-5. **Notice arm.** With `notice=True`, each applied intervention adds one
-   message to the next request only, in the outgoing copy:
+5. **Notice arm.** With `notice="once"` (or `True`), each applied
+   intervention adds one message to the next request only, in the outgoing
+   copy; with `notice="persist"` the message stays at that place in every later
+   outgoing copy, as a harness reminder would. Either way the saved trajectory
+   never contains it. The text:
    `[Note: <path> was changed outside this session after your earlier work. The change:`
    followed by a fenced unified diff with 3 lines of context and `]`.
 
