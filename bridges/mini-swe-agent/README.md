@@ -25,7 +25,9 @@ and commands run in a remote sandbox.
    the agent's own template), the projection is appended as a user message, the
    plan is committed, and only then is the request dispatched. If a native
    observation changed or an observed read has no replacement, the request is
-   refused (`FreshCtxBlocked`). The saved trajectory is unchanged.
+   refused (`FreshCtxBlocked`). The saved trajectory is unchanged. An
+   optional audit file keeps the full outgoing copy of the first request and
+   of the two requests after each intervention.
 4. **Coverage log.** For each applied intervention reported by the host, the
    bridge records whether the changed bytes lie inside the selected units of the
    next plan (`full`, `partial`, `none`).
