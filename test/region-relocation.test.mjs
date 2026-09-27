@@ -238,15 +238,51 @@ test("relocateRegion never returns stale absolute offsets for shifted bytes", ()
 });
 
 test("relocateRegion reports ambiguous when anchors bracket distinct spans", () => {
+  const prefix = "a".repeat(128);
+  const suffix = "b".repeat(128);
   const outcome = relocateRegion({
-    snapshotBytes: Buffer.from("A=1\nB=2\n", "utf8"),
+    snapshotBytes: Buffer.from(`${prefix}Z=1${suffix}${prefix}Z=2${suffix}`, "utf8"),
     parsedOk: true,
-    referentBytes: Buffer.from("ZZZ"),
-    suffixAnchor: Buffer.from("\n").toString("base64"),
-    prevStart: 20,
-    prevEnd: 23,
+    referentBytes: Buffer.from("Z=0"),
+    prefixAnchor: Buffer.from(prefix).toString("base64"),
+    suffixAnchor: Buffer.from(suffix).toString("base64"),
+    prevStart: 1000,
+    prevEnd: 1003,
   });
   assert.deepEqual(outcome, { status: "ambiguous" });
+});
+
+test("a whole-file read refreshes to the whole edited file", async (t) => {
+  const file = Array.from({ length: 40 }, (_, i) => `LINE_${i} = ${i}`).join("\n") + "\n";
+  const { root, session } = await observeRegion(t, file, file.trimEnd());
+  const mutated = file.replace("LINE_7 = 7", "LINE_7 = os.environ.get('SEVEN', 7)");
+  const { plan, unit, status } = await prepareOne(session, root, mutated);
+  assert.equal(status, "updated");
+  assert.equal(unit.content, mutated.trimEnd());
+  await session.commit({ planId: plan.plan_id });
+});
+
+test("a whole-file read is not truncated when its old end lands on a newline", async (t) => {
+  const file = "A = 1\nB = 2\nC = 3\nD = 4\n";
+  const { root, session } = await observeRegion(t, file, file.trimEnd());
+  const mutated = "A = 1234567\nB = 2\nC = 3\nD = 4\n";
+  const { unit, status } = await prepareOne(session, root, mutated);
+  assert.equal(status, "updated");
+  assert.equal(unit.content, mutated.trimEnd());
+});
+
+test("a short prefix anchor pins the region to the start of the file", () => {
+  const before = Buffer.from("X = 1\nY = 2\n# tail\nX = 1\nZ = 9\n");
+  const after = Buffer.from("X = 1\nY = 3\n# tail\nX = 1\nZ = 9\n");
+  const outcome = relocateRegion({
+    snapshotBytes: after,
+    referentBytes: before.subarray(6, 11),
+    prefixAnchor: before.subarray(0, 6).toString("base64"),
+    suffixAnchor: before.subarray(11).toString("base64"),
+    prevStart: 40,
+    prevEnd: 45,
+  });
+  assert.deepEqual(outcome, { status: "updated", startByte: 6, endByte: 11 });
 });
 
 test("identical region fingerprints at different offsets keep distinct identities across reopen", async (t) => {

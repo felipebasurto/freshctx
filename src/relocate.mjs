@@ -48,17 +48,25 @@ function unique(startByte, endByte) {
   return { status: "unique", startByte, endByte };
 }
 
+function pinned(anchor) {
+  return anchor.length < ANCHOR_BYTES;
+}
+
+function startsAfter(snapshotBytes, prefix) {
+  if (!pinned(prefix)) return findByteOccurrences(snapshotBytes, prefix).map((at) => at + prefix.length);
+  return snapshotBytes.subarray(0, prefix.length).equals(prefix) ? [prefix.length] : [];
+}
+
+function endsBefore(snapshotBytes, suffix) {
+  if (!pinned(suffix)) return findByteOccurrences(snapshotBytes, suffix);
+  const at = snapshotBytes.length - suffix.length;
+  return at >= 0 && snapshotBytes.subarray(at).equals(suffix) ? [at] : [];
+}
+
 function bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt) {
   const fits = (start, end) => end > start && end - start <= maxSpanBytes;
-  const only = (start, end) => (fits(start, end) ? unique(start, end) : NONE);
-  const starts = findByteOccurrences(snapshotBytes, prefix).map((at) => at + prefix.length);
-  const ends = findByteOccurrences(snapshotBytes, suffix);
-  if (prefix.length === 0 || suffix.length === 0) {
-    if (prefix.length === suffix.length) return only(0, snapshotBytes.length);
-    const bounds = prefix.length === 0 ? ends : starts;
-    if (bounds.length !== 1) return bounds.length === 0 ? NONE : AMBIGUOUS;
-    return prefix.length === 0 ? only(0, ends[0]) : only(starts[0], snapshotBytes.length);
-  }
+  const starts = startsAfter(snapshotBytes, prefix);
+  const ends = endsBefore(snapshotBytes, suffix);
   const bracketed = starts.filter((start) => {
     const end = ends.find((candidate) => candidate > start);
     return end !== undefined && fits(start, end);
@@ -76,13 +84,12 @@ function bracketSpan(snapshotBytes, prefix, suffix, maxSpanBytes, scoreAt) {
 }
 
 function surroundingsMatch(snapshotBytes, position, stored, before) {
-  if (stored.length === 0) return true;
   if (before) {
-    const actual = snapshotBytes.subarray(Math.max(0, position - stored.length), position);
-    return actual.equals(stored.subarray(stored.length - actual.length));
+    if (pinned(stored) && position !== stored.length) return false;
+    return position >= stored.length && snapshotBytes.subarray(position - stored.length, position).equals(stored);
   }
-  const actual = snapshotBytes.subarray(position, position + stored.length);
-  return actual.equals(stored.subarray(0, actual.length));
+  if (pinned(stored) && position + stored.length !== snapshotBytes.length) return false;
+  return snapshotBytes.subarray(position, position + stored.length).equals(stored);
 }
 
 export function relocateRegion({

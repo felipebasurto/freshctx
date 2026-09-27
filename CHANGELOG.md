@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Refresh whole-file and edge-touching region reads after an edit. A region
+  anchor shorter than 128 bytes means the region reaches the start or end of
+  the file; relocation now pins it there instead of searching for the short
+  anchor anywhere, which marked every whole-file read `ambiguous` and could
+  truncate it to its old length.
 - Retain host bridges with separate dependencies and checks; document Pi's
   tested host boundary and OpenHands' fixture-only status.
 - Prevent region refresh from jumping to an unchanged duplicate. Omit unknown
