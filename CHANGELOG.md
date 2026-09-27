@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A later partial read no longer narrows an earlier whole-file or wider
+  unit. Units inside another candidate rank after it, and a unit is omitted
+  as `overlap` only when admitted units cover all of its bytes, so partially
+  overlapping pages are both kept. This caused all three FreshCtx failures
+  in E11c (e11-24: a default-limit read then `offset: 200`; e11-10:
+  overlapping ranged reads).
 - Pi: a read without `limit` that returns the whole file is observed as the
   file, so code appended after the read is projected too. Explicit ranges
   keep region and symbol tracking.

@@ -66,24 +66,27 @@ test("a partial read projects the current Tree-sitter symbol, never its historic
   assert.match(renamedUnits[0].content, /renamed/u);
 });
 
-test("newer active symbols win over an older active file and overlapping bytes are rendered once", async (t) => {
+test("a later partial read does not narrow an older whole-file unit", async (t) => {
   const source = "def chosen():\n    return 1\n\ndef other():\n    return 2\n";
   const root = await workspaceFor(t, { "a.py": source });
   const session = await sessionFor(t, root);
-  await session.observe({ resultId: "full", path: "a.py", content: content(source), range: null, turn: 1 });
+  const full = await session.observe({ resultId: "full", path: "a.py", content: content(source), range: null, turn: 1 });
   const symbol = source.slice(0, source.indexOf("\n\ndef other"));
-  await session.observe({
+  const part = await session.observe({
     resultId: "part",
     path: "a.py",
     content: content(symbol),
     range: { startByte: 0, endByte: Buffer.byteLength(symbol) },
     turn: 2,
   });
+  await writeFile(path.join(root, "a.py"), source.replace("return 2", "return 3"));
   const plan = await session.prepare({ requestId: "provider-2", resultIds: ["full", "part"], budgetBytes: 4096 });
   const units = projectedUnits(plan);
   assert.equal(units.length, 1);
-  assert.equal(units[0].kind, "symbol");
-  assert.equal(plan.omitted[0].reason, "overlap");
+  assert.equal(units[0].kind, "file");
+  assert.match(units[0].content, /return 3/u);
+  assert.deepEqual(plan.selected, [full.unit_id]);
+  assert.deepEqual(plan.omitted, [{ unitId: part.unit_id, reason: "overlap" }]);
 });
 
 test("projection bytes are identical when membership and disk stay the same and only recency changes", async (t) => {

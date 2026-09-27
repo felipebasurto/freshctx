@@ -11,19 +11,41 @@ export function renderUnit(unit) {
   return `${unit.path}:${kind}${Buffer.byteLength(unit.content, "utf8")}bytes\n${unit.content}`;
 }
 
-function unitsOverlap(left, right) {
-  if (left.path !== right.path) return false;
-  if (left.kind === "file" || right.kind === "file") return true;
-  return left.startByte < right.endByte && right.startByte < left.endByte;
+function strictlyContains(outer, inner) {
+  return outer.path === inner.path
+    && outer.startByte <= inner.startByte && inner.endByte <= outer.endByte
+    && outer.endByte - outer.startByte > inner.endByte - inner.startByte;
 }
 
+function coveredBy(admitted, unit) {
+  const spans = admitted
+    .filter((entry) => entry.unit.path === unit.path)
+    .map((entry) => [entry.unit.startByte, entry.unit.endByte])
+    .sort((left, right) => left[0] - right[0]);
+  let reach = unit.startByte;
+  for (const [start, end] of spans) {
+    if (start > reach) break;
+    reach = Math.max(reach, end);
+    if (reach >= unit.endByte) return true;
+  }
+  return false;
+}
+
+// A unit inside another candidate ranks after it, so a later partial read never
+// narrows an earlier whole-file or wider read. A unit is omitted as overlap only
+// when admitted units already cover all of its bytes.
 export function buildProjection(units, budgetBytes) {
-  const ranked = [...units].sort((left, right) => right.observedAt - left.observedAt || left.id.localeCompare(right.id));
+  const byRecency = (left, right) => right.observedAt - left.observedAt || left.id.localeCompare(right.id);
+  const inner = new Set(units.filter((unit) => units.some((other) => strictlyContains(other, unit))));
+  const ranked = [
+    ...units.filter((unit) => !inner.has(unit)).sort(byRecency),
+    ...[...inner].sort(byRecency),
+  ];
   const admitted = [];
   const omitted = [];
   let remaining = budgetBytes;
   for (const unit of ranked) {
-    if (admitted.some((entry) => unitsOverlap(entry.unit, unit))) {
+    if (coveredBy(admitted, unit)) {
       omitted.push({ unitId: unit.id, reason: "overlap" });
       continue;
     }

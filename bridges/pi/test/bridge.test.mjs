@@ -179,3 +179,63 @@ test('resume follows a moved symbol; compacted results stay inactive until read 
   assert.match(reread.messages.at(-1).content, /return RATE \* 2/);
   assert.doesNotMatch(JSON.stringify(reread), /read_1/);
 });
+
+// E11c regressions (freshctx-research labs/jev-stale-view-v1, e11-24 and e11-10):
+// a later partial read must not narrow what an earlier wider read tracked.
+function method(name, body) {
+  return [`    def ${name}(self):`, `        """${name} docs."""`, ...body.map(line => `        ${line}`), ''];
+}
+function lexerLike(totalLines) {
+  const tail = [...method('scan_literal', ['chars = ""', 'while self.peek() not in " \\n":', '    chars += self.consume()', 'return chars']),
+    ...method('scan_quoted_literal', ['chars = ""', 'while True:', '    ch = self.peek()', '    if ch == \'"\':', '        break', '    chars += self.consume()', 'return chars'])];
+  const lines = ['"""Splits a string into tokens."""', '', 'class Lexer:'];
+  for (let index = 0; lines.length + tail.length + 4 <= totalLines; index += 1) lines.push(...method(`scan_${index}`, [`return ${index}`]));
+  while (lines.length + tail.length < totalLines) lines.push('    # padding');
+  return [...lines, ...tail].join('\n');
+}
+function reads(texts) {
+  const messages = [];
+  texts.forEach((text, index) => {
+    messages.push({ role: 'assistant', content: null, tool_calls: [{ id: `read_${index + 1}`, type: 'function', function: { name: 'read', arguments: '{}' } }] });
+    messages.push({ role: 'tool', tool_call_id: `read_${index + 1}`, content: text });
+  });
+  return { model: 'test', messages: [...messages, { role: 'user', content: 'Question?' }] };
+}
+const EDIT = ['return chars', 'if chars == "-" and self.peek() in " \\t":\n            return "exclusion"\n        return chars'];
+for (const [label, lines] of [['e11-24: 204 lines, default limit then offset 200', 204], ['whole file (180 lines) then offset read', 180]]) {
+  test(`${label}: the edited function above the last one stays projected`, async t => {
+    const root = await mkdtemp(join(tmpdir(), 'freshctx-pi-e11c-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const source = lexerLike(lines);
+    assert.equal(source.split('\n').length, lines);
+    await writeFile(join(root, 'lexer.py'), source);
+    const bridge = new Bridge({ root, sessionId: 'e11c' });
+    t.after(() => bridge.close());
+    const first = await bridge.read('read_1', { path: 'lexer.py' });
+    const second = await bridge.read('read_2', { path: 'lexer.py', offset: lines - 4 });
+    const literal = source.indexOf('def scan_literal');
+    await writeFile(join(root, 'lexer.py'), source.slice(0, literal) + source.slice(literal).replace(...EDIT));
+    const copy = await bridge.rewrite(reads([first.content[0].text, second.content[0].text]));
+    const projection = copy.messages.at(-1).content;
+    assert.match(projection, /if chars == "-" and self\.peek\(\)/);
+    assert.match(projection, /def scan_quoted_literal/);
+    assert.doesNotMatch(copy.messages.filter(m => m.role === 'tool').map(m => m.content).join(' '), /ambiguous|unresolved/);
+  });
+}
+test('e11-10: overlapping ranged reads keep the region that covers the edit', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'freshctx-pi-e11c-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = Array.from({ length: 511 }, (_, index) => `value_${index + 1} = ${index + 1}  # line ${index + 1}`).join('\n');
+  await writeFile(join(root, 'utils.py'), source);
+  const bridge = new Bridge({ root, sessionId: 'e11c' });
+  t.after(() => bridge.close());
+  const texts = [];
+  let id = 0;
+  for (const args of [{}, { offset: 200, limit: 200 }, { limit: 200, offset: 1 }, { limit: 120, offset: 200 }, { limit: 60, offset: 320 }]) {
+    texts.push((await bridge.read(`read_${++id}`, { path: 'utils.py', ...args })).content[0].text);
+  }
+  await writeFile(join(root, 'utils.py'), source.replace('value_335 = 335  # line 335', 'value_335 = 336  # edited'));
+  const projection = (await bridge.rewrite(reads(texts))).messages.at(-1).content;
+  assert.match(projection, /value_335 = 336  # edited/);
+  assert.match(projection, /value_1 = 1  # line 1\n/);
+});

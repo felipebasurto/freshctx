@@ -73,3 +73,22 @@ test("UTF-8 frame budgets admit exact fits and skip an oversized recent unit", (
     omitted: [{ unitId: "a", reason: "budget" }],
   });
 });
+
+test("a unit inside an older wider unit ranks after it; partial overlaps keep both", () => {
+  const body = "a\n".repeat(50);
+  const file = unit({ id: "file", path: "a.py", kind: "file", content: body, observedAt: 1 });
+  const tail = unit({ id: "tail", path: "a.py", kind: "symbol", content: body.slice(90), startByte: 90, endByte: 100, observedAt: 2 });
+  const inside = buildProjection([file, tail], 4096);
+  assert.deepEqual(inside.selected.map((item) => item.id), ["file"]);
+  assert.deepEqual(inside.omitted, [{ unitId: "tail", reason: "overlap" }]);
+
+  const head = unit({ id: "head", path: "a.py", kind: "region", content: body.slice(0, 60), startByte: 0, endByte: 60, observedAt: 1 });
+  const middle = unit({ id: "middle", path: "a.py", kind: "region", content: body.slice(58, 80), startByte: 58, endByte: 80, observedAt: 2 });
+  const partial = buildProjection([head, middle], 4096);
+  assert.deepEqual(partial.selected.map((item) => item.id).sort(), ["head", "middle"]);
+  assert.deepEqual(partial.omitted, []);
+
+  const spanned = unit({ id: "spanned", path: "a.py", kind: "region", content: body.slice(50, 70), startByte: 50, endByte: 70, observedAt: 0 });
+  const union = buildProjection([head, middle, spanned], 4096);
+  assert.deepEqual(union.omitted, [{ unitId: "spanned", reason: "overlap" }]);
+});

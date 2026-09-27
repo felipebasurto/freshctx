@@ -63,8 +63,9 @@ current whole file, subject to the same byte budget.
 
 Region relocation uses textual anchors and similarity heuristics. Ambiguous
 repeated occurrences are omitted; arbitrary refactors and semantic identity
-are not guaranteed. Selection uses observation recency and overlap, not task
-relevance or a dependency graph. Unread or omitted code is not evidence that
+are not guaranteed. Selection uses observation recency and containment (a later
+partial read does not narrow an earlier wider one), not task relevance or a
+dependency graph. Unread or omitted code is not evidence that
 something is absent.
 
 A failed plan cancels dispatch. A deleted or over-budget unit can instead be

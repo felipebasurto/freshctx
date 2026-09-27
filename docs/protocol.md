@@ -119,9 +119,12 @@ or text resembling another header. `Nbytes` is never a read-tool line offset.
 
 The byte budget covers rendered headers and source bodies in the projection.
 It excludes historical markers, other messages, provider serialization, and
-model tokens. Units rank by descending observation recency, then ID; admitted
-units prevent overlapping candidates from also being admitted. Oversized units
-are skipped without truncation. Rendering orders the final set by path, then ID.
+model tokens. Units rank by descending observation recency, then ID, except
+that a unit lying inside another candidate on the same path ranks after it, so
+a later partial read never narrows an earlier whole-file or wider read. A unit
+is omitted as `overlap` only when admitted units already cover all of its
+bytes; partially overlapping units are both admitted. Oversized units are
+skipped without truncation. Rendering orders the final set by path, then ID.
 This policy does not discover dependencies or score task relevance.
 
 ## Freshness boundary, retries, and storage
