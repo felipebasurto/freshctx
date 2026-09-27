@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Mini-SWE-Agent bridge (`bridges/mini-swe-agent`): observes allowlisted
+  shell reads (`cat`, `cat -n`, `nl -ba`, `sed -n 'A,Bp'`, `nl -ba | sed -n`,
+  `head -n`, `tail -n`) only when the output equals a host mirror of the
+  sandbox file exactly, rewrites observation messages to markers in the
+  outgoing copy, appends the projection, and refuses dispatch when a native
+  observation changed. Logs intervention coverage and can add a one-time
+  change notice with a unified diff (the E11c notice arm).
 - A later partial read no longer narrows an earlier whole-file or wider
   unit. Units inside another candidate rank after it, and a unit is omitted
   as `overlap` only when admitted units cover all of its bytes, so partially

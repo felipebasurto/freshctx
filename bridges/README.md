@@ -8,6 +8,7 @@ separate manifests, dependencies, and tests. Their development dependency is
 | --- | --- |
 | [Pi](pi/README.md) | Pi 0.85.0, `openai-completions`, real tool execution and HTTP serialization against a local scripted provider; saved-session resume and rejected-request cancellation. |
 | [OpenHands](openhands/README.md) | Node and Python request-rewriting fixtures and an LLM wrapper. No pinned OpenHands agent or real condenser integration test. |
+| [Mini-SWE-Agent](mini-swe-agent/README.md) | Shell-read observation through a host mirror and request rewriting, tested with Mini-SWE-Agent 2.4.1's `DefaultAgent`, a scripted model and a local repository. No model or remote sandbox run yet. |
 
 Read the [protocol contract](../docs/protocol.md) before implementing a host.
 The host must identify every successful source read, preserve tool identities,

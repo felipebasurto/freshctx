@@ -1,0 +1,32 @@
+{
+  "name": "freshctx-mini-swe-agent",
+  "version": "0.1.0",
+  "description": "Mini-SWE-Agent bridge for FreshCtx: shell-read observation and request rewriting through a host mirror.",
+  "license": "MIT",
+  "author": {
+    "name": "Felipe Basurto",
+    "url": "https://felipebasurto.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/felipebasurto/freshctx.git",
+    "directory": "bridges/mini-swe-agent"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "freshctx_mini.py",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mini-swe-agent",
+    "freshctx"
+  ],
+  "scripts": {
+    "check": "python3 -m py_compile freshctx_mini.py test/test_shell_reads.py test/test_agent.py",
+    "test": "python3 -m unittest discover -s test -v"
+  },
+  "private": true
+}
